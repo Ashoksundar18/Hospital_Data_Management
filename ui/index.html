@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hospital Storage Lifecycle Recommender (Phase 1 Prototype)</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <div class="title-section">
+            <h1>🏥 Hospital Storage Lifecycle Recommender</h1>
+            <p class="subtitle">Phase 1 Foundation Prototype — Responsible AI Multi-Cloud Storage Optimization</p>
+        </div>
+    </header>
+
+    <!-- Metrics Overview Cards -->
+    <div class="metrics-grid">
+        <div class="metric-card">
+            <span class="metric-label">Total Evaluated Objects</span>
+            <span class="metric-value" id="metric-total">0</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-label">Transition Recs</span>
+            <span class="metric-value transition" id="metric-transition">0</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-label">Delete Recs</span>
+            <span class="metric-value delete" id="metric-delete">0</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-label">Compliance Protected</span>
+            <span class="metric-value protected" id="metric-protected">0</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-label">Low Confidence (Missing Data)</span>
+            <span class="metric-value missing" id="metric-missing">0</span>
+        </div>
+    </div>
+
+    <!-- Filter & Search Controls -->
+    <div class="controls-bar">
+        <div class="filter-group">
+            <label for="filter-classification">Classification</label>
+            <select id="filter-classification">
+                <option value="ALL">All Classifications</option>
+                <option value="MEDICAL_IMAGE">Medical Images</option>
+                <option value="APP_LOG">Application Logs</option>
+                <option value="BACKUP">Database Backups</option>
+            </select>
+        </div>
+
+        <div class="filter-group">
+            <label for="filter-action">Recommended Action</label>
+            <select id="filter-action">
+                <option value="ALL">All Actions</option>
+                <option value="TRANSITION">TRANSITION</option>
+                <option value="DELETE">DELETE</option>
+                <option value="NO_ACTION">NO_ACTION</option>
+            </select>
+        </div>
+
+        <div class="filter-group">
+            <label for="filter-data">Telemetry Feed Status</label>
+            <select id="filter-data">
+                <option value="ALL">All Feeds</option>
+                <option value="COMPLETE">Complete Data Only</option>
+                <option value="MISSING">Missing / Delayed Feeds</option>
+            </select>
+        </div>
+
+        <div class="filter-group" style="flex-grow: 1;">
+            <label for="search-input">Search Object ID / Bucket</label>
+            <input type="text" id="search-input" placeholder="Type object ID or bucket name...">
+        </div>
+    </div>
+
+    <!-- Recommendations Table -->
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Object & Cloud Info</th>
+                    <th>Storage Class & Age</th>
+                    <th>Recommended Action</th>
+                    <th>Impact / Risk</th>
+                    <th>Confidence</th>
+                    <th>Triggering Rules</th>
+                    <th>Evidence</th>
+                </tr>
+            </thead>
+            <tbody id="table-body">
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 24px; color: #94a3b8;">
+                        Loading storage objects and running rules engine...
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Evidence Snapshot Modal -->
+<div class="modal-backdrop" id="evidence-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title">Rule & Evidence Snapshot: <span id="modal-object-id"></span></h3>
+            <button class="close-btn" onclick="closeModal()">&times;</button>
+        </div>
+        <div style="margin-bottom: 16px;">
+            <h4 style="font-size: 0.9rem; color: #94a3b8; margin-bottom: 4px;">REASONING SUMMARY</h4>
+            <p id="modal-summary" style="background: #0f172a; padding: 12px; border-radius: 6px; border-left: 4px solid #38bdf8; font-size: 0.9rem;"></p>
+        </div>
+        <div>
+            <h4 style="font-size: 0.9rem; color: #94a3b8; margin-bottom: 4px;">STRUCTURED EVIDENCE & INPUT SNAPSHOT</h4>
+            <pre id="modal-json"></pre>
+        </div>
+    </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
