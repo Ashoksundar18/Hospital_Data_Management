@@ -1,0 +1,29 @@
+[
+  {
+    "id": "rule-hipaa-medical-image",
+    "applies_to_classification": "MEDICAL_IMAGE",
+    "applies_to_bucket_pattern": "hospital-radiology-*",
+    "min_retention_days": 2555,
+    "legal_hold_override_behavior": "PRESERVE_INDEFINITELY",
+    "jurisdiction": "HIPAA_US",
+    "description": "HIPAA Medical Records Retention requirement: Minimum 7 years (2555 days) retention for diagnostic medical images."
+  },
+  {
+    "id": "rule-app-log-retention",
+    "applies_to_classification": "APP_LOG",
+    "applies_to_bucket_pattern": "hospital-syslog-*",
+    "min_retention_days": 365,
+    "legal_hold_override_behavior": "PRESERVE_INDEFINITELY",
+    "jurisdiction": "HITECH_US",
+    "description": "Application & EHR Access Audit Log Retention: Minimum 1 year (365 days) retention."
+  },
+  {
+    "id": "rule-backup-dr-retention",
+    "applies_to_classification": "BACKUP",
+    "applies_to_bucket_pattern": "hospital-backups-*",
+    "min_retention_days": 1095,
+    "legal_hold_override_behavior": "PRESERVE_INDEFINITELY",
+    "jurisdiction": "INTERNAL_POLICY",
+    "description": "Disaster Recovery Database Snapshot Retention: Minimum 3 years (1095 days) retention."
+  }
+]
