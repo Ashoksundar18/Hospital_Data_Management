@@ -495,5 +495,70 @@ def test_audit_log_concurrency_and_unique_hashes():
             db.close()
 
 
+def test_confirm_recommendation_idempotency():
+    """
+    Verifies that calling confirm multiple times on the same recommendation
+    returns HTTP 200 with current state and does NOT create duplicate audit log entries.
+    """
+    with TestClient(app) as client:
+        # Ingest object
+        client.post("/api/v1/objects", json={
+            "id": "obj-idempotent-01",
+            "bucket_or_account": "b-idempotent",
+            "cloud_provider": "AWS",
+            "data_classification": "BACKUP",
+            "current_storage_class": "HOT",
+            "size_bytes": 1000,
+            "object_age_days": 120,
+            "legal_hold": False
+        })
+        client.get("/api/v1/recommendations")
+
+        # First confirm
+        res1 = client.post("/api/v1/recommendations/obj-idempotent-01/confirm", json={"reviewer_id": "usr-1"})
+        assert res1.status_code == 200
+        assert res1.json()["approval_status"] == "confirmed"
+
+        audit_count_before = len(client.get("/api/v1/audit-log?object_id=obj-idempotent-01").json())
+
+        # Second confirm (duplicate call)
+        res2 = client.post("/api/v1/recommendations/obj-idempotent-01/confirm", json={"reviewer_id": "usr-1"})
+        assert res2.status_code == 200
+        assert res2.json()["approval_status"] == "confirmed"
+
+        audit_count_after = len(client.get("/api/v1/audit-log?object_id=obj-idempotent-01").json())
+
+        # No new audit log entries should have been created
+        assert audit_count_after == audit_count_before
+
+
+def test_rollback_non_confirmed_recommendation_returns_409_conflict():
+    """
+    Verifies that attempting to rollback a recommendation that is NOT in 'confirmed' or 'overridden'
+    status is rejected with HTTP 409 Conflict.
+    """
+    with TestClient(app) as client:
+        client.post("/api/v1/objects", json={
+            "id": "obj-invalid-rollback-01",
+            "bucket_or_account": "b-rollback",
+            "cloud_provider": "AWS",
+            "data_classification": "APP_LOG",
+            "current_storage_class": "HOT",
+            "size_bytes": 1000,
+            "object_age_days": 100,
+            "legal_hold": False
+        })
+        client.get("/api/v1/recommendations")
+
+        # Recommendation status is 'pending', attempting rollback should return 409
+        res_rlb = client.post(
+            "/api/v1/recommendations/obj-invalid-rollback-01/rollback",
+            json={"reviewer_id": "usr-audit", "reason": "Invalid rollback attempt"}
+        )
+        assert res_rlb.status_code == 409
+        assert "must be confirmed or overridden" in res_rlb.json()["detail"]
+
+
+
 
 

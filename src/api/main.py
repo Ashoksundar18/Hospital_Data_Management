@@ -377,6 +377,16 @@ def get_recommendations(
     return output_recommendations
 
 
+def get_recommendation_with_lock(db: Session, rec_id_or_obj_id: str) -> Optional[RecommendationDB]:
+    """Retrieves a recommendation row with row-level pessimistic locking on Postgres backends."""
+    query = db.query(RecommendationDB).filter(
+        (RecommendationDB.id == rec_id_or_obj_id) | (RecommendationDB.object_id == rec_id_or_obj_id)
+    )
+    if db.bind and db.bind.dialect.name == "postgresql":
+        query = query.with_for_update()
+    return query.first()
+
+
 # --- HUMAN-IN-THE-LOOP GOVERNANCE ENDPOINTS ---
 
 @app.post("/api/v1/recommendations/{rec_id_or_obj_id}/confirm", response_model=Recommendation)
@@ -387,16 +397,25 @@ def confirm_recommendation(
 ):
     """
     Phase 2: Confirms a recommendation. Updates approval_status to 'confirmed' and writes audit log.
+    Idempotent: Re-confirming an already-confirmed recommendation returns HTTP 200 without creating duplicate records.
     """
-    rec_db = db.query(RecommendationDB).filter(
-        (RecommendationDB.id == rec_id_or_obj_id) | (RecommendationDB.object_id == rec_id_or_obj_id)
-    ).first()
+    rec_db = get_recommendation_with_lock(db, rec_id_or_obj_id)
 
     if not rec_db:
         raise HTTPException(status_code=404, detail=f"Recommendation for ID '{rec_id_or_obj_id}' not found")
 
+    # IDEMPOTENCY CHECK: If already confirmed, return current record without creating duplicate governance/audit rows
+    if rec_db.approval_status == ApprovalStatus.CONFIRMED.value:
+        pydantic_obj = db_obj_to_pydantic(db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first())
+        engine = LifecycleRulesEngine()
+        rec = engine.evaluate_object(pydantic_obj)
+        rec.id = rec_db.id
+        rec.approval_status = ApprovalStatus.CONFIRMED
+        rec.requires_periodic_review = rec_db.requires_periodic_review
+        rec.last_reviewed_at = rec_db.last_reviewed_at
+        return rec
+
     rec_db.approval_status = ApprovalStatus.CONFIRMED.value
-    db.commit()
 
     # Record confirmation governance row
     conf_record = ConfirmationOverrideDB(
@@ -408,7 +427,6 @@ def confirm_recommendation(
         timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
     db.add(conf_record)
-    db.commit()
 
     write_audit_entry(
         db,
@@ -421,8 +439,11 @@ def confirm_recommendation(
             "reviewer_id": body.reviewer_id,
             "impact_tier": rec_db.impact_tier,
             "recommended_action": rec_db.recommended_action
-        }
+        },
+        auto_commit=False
     )
+    db.commit()
+    db.refresh(rec_db)
 
     pydantic_obj = db_obj_to_pydantic(db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first())
     engine = LifecycleRulesEngine()
@@ -443,15 +464,12 @@ def override_recommendation(
     """
     Phase 2: Overrides a recommendation with structured reason taxonomy. Updates approval_status to 'overridden' and writes audit log.
     """
-    rec_db = db.query(RecommendationDB).filter(
-        (RecommendationDB.id == rec_id_or_obj_id) | (RecommendationDB.object_id == rec_id_or_obj_id)
-    ).first()
+    rec_db = get_recommendation_with_lock(db, rec_id_or_obj_id)
 
     if not rec_db:
         raise HTTPException(status_code=404, detail=f"Recommendation for ID '{rec_id_or_obj_id}' not found")
 
     rec_db.approval_status = ApprovalStatus.OVERRIDDEN.value
-    db.commit()
 
     override_record = ConfirmationOverrideDB(
         id=f"ovr-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
@@ -464,7 +482,6 @@ def override_recommendation(
         timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
     db.add(override_record)
-    db.commit()
 
     write_audit_entry(
         db,
@@ -478,8 +495,11 @@ def override_recommendation(
             "override_reason_taxonomy": body.override_reason.value,
             "other_reason_text": body.other_reason_text,
             "impact_tier": rec_db.impact_tier
-        }
+        },
+        auto_commit=False
     )
+    db.commit()
+    db.refresh(rec_db)
 
     pydantic_obj = db_obj_to_pydantic(db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first())
     engine = LifecycleRulesEngine()
@@ -500,15 +520,12 @@ def periodic_review_recommendation(
     """
     Phase 2: Completes compliance periodic re-confirmation for NO_ACTION items (legal hold / retention lock).
     """
-    rec_db = db.query(RecommendationDB).filter(
-        (RecommendationDB.id == rec_id_or_obj_id) | (RecommendationDB.object_id == rec_id_or_obj_id)
-    ).first()
+    rec_db = get_recommendation_with_lock(db, rec_id_or_obj_id)
 
     if not rec_db:
         raise HTTPException(status_code=404, detail=f"Recommendation for ID '{rec_id_or_obj_id}' not found")
 
     rec_db.last_reviewed_at = datetime.datetime.now(datetime.timezone.utc)
-    db.commit()
 
     review_record = ConfirmationOverrideDB(
         id=f"rev-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
@@ -519,7 +536,6 @@ def periodic_review_recommendation(
         timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
     db.add(review_record)
-    db.commit()
 
     write_audit_entry(
         db,
@@ -531,8 +547,11 @@ def periodic_review_recommendation(
             "action": "PERIODIC_REVIEW",
             "reviewer_id": body.reviewer_id,
             "reviewed_at": rec_db.last_reviewed_at.isoformat()
-        }
+        },
+        auto_commit=False
     )
+    db.commit()
+    db.refresh(rec_db)
 
     pydantic_obj = db_obj_to_pydantic(db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first())
     engine = LifecycleRulesEngine()
@@ -552,17 +571,22 @@ def rollback_recommendation(
 ):
     """
     Phase 2: Governance-level rollback of a confirmed or overridden recommendation back to 'rolled_back' state.
+    Requires current status to be 'confirmed' or 'overridden'.
     """
-    rec_db = db.query(RecommendationDB).filter(
-        (RecommendationDB.id == rec_id_or_obj_id) | (RecommendationDB.object_id == rec_id_or_obj_id)
-    ).first()
+    rec_db = get_recommendation_with_lock(db, rec_id_or_obj_id)
 
     if not rec_db:
         raise HTTPException(status_code=404, detail=f"Recommendation for ID '{rec_id_or_obj_id}' not found")
 
+    # VALID STATUS CHECK: Rollback requires current status to be 'confirmed' or 'overridden'
+    if rec_db.approval_status not in [ApprovalStatus.CONFIRMED.value, ApprovalStatus.OVERRIDDEN.value]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot rollback recommendation '{rec_id_or_obj_id}': current status is '{rec_db.approval_status}', must be confirmed or overridden."
+        )
+
     previous_status = rec_db.approval_status
     rec_db.approval_status = ApprovalStatus.ROLLED_BACK.value
-    db.commit()
 
     rollback_record = ConfirmationOverrideDB(
         id=f"rlb-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
@@ -574,7 +598,6 @@ def rollback_recommendation(
         timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
     db.add(rollback_record)
-    db.commit()
 
     write_audit_entry(
         db,
@@ -587,8 +610,11 @@ def rollback_recommendation(
             "reviewer_id": body.reviewer_id,
             "previous_approval_status": previous_status,
             "rollback_reason": body.reason
-        }
+        },
+        auto_commit=False
     )
+    db.commit()
+    db.refresh(rec_db)
 
     pydantic_obj = db_obj_to_pydantic(db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first())
     engine = LifecycleRulesEngine()
