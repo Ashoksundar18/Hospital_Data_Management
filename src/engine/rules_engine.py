@@ -28,13 +28,12 @@ class LifecycleRulesEngine:
     
     Rule Catalog:
     1. RULE_LEGAL_HOLD: Hard compliance lock. Legal hold forces NO_ACTION.
-       Confidence: ALWAYS HIGH (does not depend on access/restore telemetry).
-       Governance: Sets requires_periodic_review = True.
+       Confidence: ALWAYS HIGH. Sets requires_periodic_review = True.
     2. RULE_RETENTION_LOCK: Blocks DELETE recommendations if age < min_retention_days.
-       Confidence: ALWAYS HIGH.
-       Governance: Sets requires_periodic_review = True for NO_ACTION outcomes.
+       Confidence: ALWAYS HIGH. Sets requires_periodic_review = True for NO_ACTION outcomes.
     3. RULE_RETRIEVAL_SLA (Phase 2): Blocks or downgrades transitions to tiers colder than
-       min_retrieval_tier specified by applicable RetentionRule.
+       min_retrieval_tier. For pre-existing violations (current class colder than min_retrieval_tier),
+       blocks further colder transitions and sets requires_periodic_review = True.
        Confidence: ALWAYS HIGH.
     4. RULE_EXPIRATION_DELETE: Recommends DELETE if age >= max_lifecycle_days and retention is satisfied.
        Confidence: ALWAYS HIGH.
@@ -124,8 +123,17 @@ class LifecycleRulesEngine:
             "missing_restore_data": missing_restore,
         }
 
-        # RULE 1: Legal Hold Check (Hard compliance invariant)
-        # Periodic Review: Compliance-sensitive NO_ACTION items set requires_periodic_review = True
+        # Check for PRE-EXISTING RETRIEVAL SLA VIOLATION
+        preexisting_sla_violation = False
+        if applicable_rule and applicable_rule.min_retrieval_tier:
+            min_tier = applicable_rule.min_retrieval_tier
+            curr_idx = TIER_ORDER.index(obj.current_storage_class)
+            min_idx = TIER_ORDER.index(min_tier)
+            if curr_idx > min_idx:
+                preexisting_sla_violation = True
+                evidence["preexisting_retrieval_sla_violation"] = True
+
+        # RULE 1: Legal Hold Check
         if obj.legal_hold:
             return Recommendation(
                 object_id=obj.id,
@@ -138,7 +146,7 @@ class LifecycleRulesEngine:
                 impact_tier=ImpactTier.LOW_IMPACT,
                 data_completeness_flag=completeness,
                 approval_status=ApprovalStatus.PENDING,
-                requires_periodic_review=True,  # Phase 2 Compliance Review Flag
+                requires_periodic_review=True,
                 reasoning_summary="Object is under legal hold. Deletion and storage class transitions are strictly prohibited by compliance policy."
             )
 
@@ -166,7 +174,7 @@ class LifecycleRulesEngine:
                     impact_tier=ImpactTier.LOW_IMPACT,
                     data_completeness_flag=completeness,
                     approval_status=ApprovalStatus.PENDING,
-                    requires_periodic_review=True,  # Phase 2 Compliance Review Flag
+                    requires_periodic_review=True,
                     reasoning_summary=f"Object age ({obj.object_age_days}d) exceeds maximum lifecycle policy, but minimum retention period ({min_retention_days}d) is not satisfied. Deletion blocked by retention rule '{applicable_rule.id if applicable_rule else 'default'}'."
                 )
             else:
@@ -184,6 +192,23 @@ class LifecycleRulesEngine:
                     requires_periodic_review=False,
                     reasoning_summary=f"Object age ({obj.object_age_days}d) exceeds lifecycle expiration threshold ({max_lifecycle_days}d) and retention requirement ({min_retention_days}d) is satisfied. Recommended for deletion."
                 )
+
+        # PRE-EXISTING RETRIEVAL SLA VIOLATION CHECK: If current class already violates SLA, block transitions & flag review
+        if preexisting_sla_violation:
+            return Recommendation(
+                object_id=obj.id,
+                current_class=obj.current_storage_class,
+                recommended_action=RecommendedAction.NO_ACTION,
+                target_storage_class=None,
+                triggering_rules=["RULE_RETRIEVAL_SLA"],
+                evidence_snapshot=evidence,
+                confidence_tier=ConfidenceTier.HIGH,
+                impact_tier=ImpactTier.LOW_IMPACT,
+                data_completeness_flag=completeness,
+                approval_status=ApprovalStatus.PENDING,
+                requires_periodic_review=True,  # Flag for compliance review!
+                reasoning_summary=f"Pre-existing Retrieval SLA Violation: Object current storage class ({obj.current_storage_class.value}) is colder than required minimum retrieval tier ({applicable_rule.min_retrieval_tier.value}). Further transitions blocked; flagged for compliance review."
+            )
 
         # RULE 3: Recent Restore Event Protection
         if recent_restore_detected:
@@ -210,7 +235,6 @@ class LifecycleRulesEngine:
             final_target_tier = candidate_tier
             retrieval_sla_triggered = False
 
-            # Phase 2 RULE_RETRIEVAL_SLA check
             if applicable_rule and applicable_rule.min_retrieval_tier:
                 min_tier = applicable_rule.min_retrieval_tier
                 curr_idx = TIER_ORDER.index(obj.current_storage_class)
@@ -218,18 +242,14 @@ class LifecycleRulesEngine:
                 min_idx = TIER_ORDER.index(min_tier)
 
                 if cand_idx > min_idx:
-                    # Candidate tier is colder than allowed min_retrieval_tier
                     retrieval_sla_triggered = True
                     if curr_idx < min_idx:
-                        # Downgrade target to min_retrieval_tier
                         final_target_tier = min_tier
                         transition_reason = f"Transition downgraded to {min_tier.value}: Candidate tier {candidate_tier.value} violates retention rule retrieval SLA constraint (min_retrieval_tier: {min_tier.value})."
                     else:
-                        # Current class is already at or colder than min_retrieval_tier -> block further transition
                         final_target_tier = None
 
             if final_target_tier is None:
-                # Transition blocked by RULE_RETRIEVAL_SLA
                 return Recommendation(
                     object_id=obj.id,
                     current_class=obj.current_storage_class,

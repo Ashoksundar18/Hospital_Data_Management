@@ -296,3 +296,49 @@ def test_governance_rollback_workflow():
         # Verify audit log recorded ROLLBACK_RECOMMENDATION event
         audit_res = client.get("/api/v1/audit-log?object_id=obj-rollback-01").json()
         assert any(a["event_type"] == "ROLLBACK_RECOMMENDATION" for a in audit_res)
+
+
+def test_preexisting_retrieval_sla_violation():
+    """
+    7. Pre-existing Retrieval SLA Violation Test:
+    When an object's current storage class ALREADY violates min_retrieval_tier
+    (e.g., current_storage_class=ARCHIVE, min_retrieval_tier=COOL):
+    - Recommended action MUST be NO_ACTION.
+    - Triggering rules MUST contain RULE_RETRIEVAL_SLA.
+    - requires_periodic_review MUST be True (flagged for compliance review).
+    - Reasoning summary MUST explicitly state "Pre-existing Retrieval SLA Violation".
+    """
+    rule_cool = RetentionRule(
+        id="rule-sla-cool-strict",
+        applies_to_classification=DataClassification.MEDICAL_IMAGE,
+        min_retention_days=365,
+        min_retrieval_tier=StorageClass.COOL,  # Minimum retrieval tier is COOL
+        description="SLA requiring at least COOL retrieval tier"
+    )
+
+    engine = LifecycleRulesEngine(retention_rules=[rule_cool])
+
+    # Object is already in ARCHIVE tier (colder than COOL)
+    obj_in_violation = StorageObject(
+        id="obj-preexisting-sla-01",
+        bucket_or_account="hospital-archive-bucket",
+        cloud_provider=CloudProvider.AWS,
+        data_classification=DataClassification.MEDICAL_IMAGE,
+        current_storage_class=StorageClass.ARCHIVE,  # VIOLATION: ARCHIVE is index 3 > COOL (index 1)
+        size_bytes=5000000,
+        object_age_days=100,
+        access_frequency_30d=0,
+        retention_rule_id="rule-sla-cool-strict",
+        legal_hold=False
+    )
+
+    rec = engine.evaluate_object(obj_in_violation)
+
+    assert rec.recommended_action == RecommendedAction.NO_ACTION
+    assert rec.target_storage_class is None
+    assert "RULE_RETRIEVAL_SLA" in rec.triggering_rules
+    assert rec.requires_periodic_review is True
+    assert rec.confidence_tier == ConfidenceTier.HIGH
+    assert "pre-existing retrieval sla violation" in rec.reasoning_summary.lower()
+    assert rec.evidence_snapshot.get("preexisting_retrieval_sla_violation") is True
+
