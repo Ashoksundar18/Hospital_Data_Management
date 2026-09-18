@@ -435,4 +435,65 @@ def test_resolve_database_url_priority_and_normalization():
     assert resolve_database_url(env_f) is None
 
 
+def test_audit_log_concurrency_and_unique_hashes():
+    """
+    Verifies that concurrent confirmations on different objects produce a valid,
+    untampered audit chain where every previous_hash and entry_hash is unique.
+    """
+    import concurrent.futures
+
+    with TestClient(app) as client:
+        # Ingest 10 test objects
+        obj_ids = [f"obj-concurrent-{i:02d}" for i in range(10)]
+        for oid in obj_ids:
+            client.post("/api/v1/objects", json={
+                "id": oid,
+                "bucket_or_account": "hospital-concurrent-bucket",
+                "cloud_provider": "AWS",
+                "data_classification": "BACKUP",
+                "current_storage_class": "HOT",
+                "size_bytes": 10000,
+                "object_age_days": 100,
+                "legal_hold": False
+            })
+        client.get("/api/v1/recommendations")
+
+        def confirm_worker(oid):
+            with TestClient(app) as worker_client:
+                return worker_client.post(
+                    f"/api/v1/recommendations/{oid}/confirm",
+                    json={"reviewer_id": f"usr-worker-{oid}"}
+                )
+
+        # Execute 10 parallel confirmations using ThreadPoolExecutor
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(confirm_worker, oid) for oid in obj_ids]
+            results = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+        for res in results:
+            assert res.status_code == 200
+
+        # Verify audit chain integrity across all entries
+        from src.db import SessionLocal
+        from src.services.audit_service import GENESIS_HASH
+        db = SessionLocal()
+        try:
+            is_valid, tampered_id, message = verify_audit_chain(db)
+            assert is_valid is True, f"Audit chain verification failed: {message}"
+            assert tampered_id is None
+
+            entries = db.query(AuditLogDB).all()
+            hashes = [e.entry_hash for e in entries]
+            prev_hashes = [e.previous_hash for e in entries]
+
+            # Every entry_hash must be unique
+            assert len(hashes) == len(set(hashes))
+            # Every previous_hash (except GENESIS_HASH) must be unique
+            non_genesis_prev = [p for p in prev_hashes if p != GENESIS_HASH]
+            assert len(non_genesis_prev) == len(set(non_genesis_prev))
+        finally:
+            db.close()
+
+
+
 
