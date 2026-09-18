@@ -342,3 +342,46 @@ def test_preexisting_retrieval_sla_violation():
     assert "pre-existing retrieval sla violation" in rec.reasoning_summary.lower()
     assert rec.evidence_snapshot.get("preexisting_retrieval_sla_violation") is True
 
+
+def test_render_missing_database_url_raises_runtime_error(monkeypatch):
+    """
+    Verifies that if RENDER=true is set and DATABASE_URL is missing,
+    initializing the database module raises a clear RuntimeError.
+    """
+    monkeypatch.setenv("RENDER", "true")
+    for var in ["DATABASE_URL", "Database_Url", "INTERNAL_DATABASE_URL", "EXTERNAL_DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL"]:
+        monkeypatch.delenv(var, raising=False)
+
+    import importlib
+    import src.db.database
+    with pytest.raises(RuntimeError, match="DATABASE_URL environment variable is required when running on Render"):
+        importlib.reload(src.db.database)
+
+
+def test_no_duplicate_initialize_dataset_audit_entry_on_reboot():
+    """
+    Verifies that startup preloading does not duplicate the INITIALIZE_DATASET audit entry
+    when objects already exist in the database.
+    """
+    with TestClient(app) as client:
+        # First call triggers startup lifespan and preloading
+        res1 = client.get("/api/v1/audit-log?event_type=INITIALIZE_DATASET")
+        assert res1.status_code == 200
+        initial_entries = res1.json()
+
+        # Simulate secondary startup / preload call on existing DB session
+        from src.api.main import preload_initial_data
+        from src.db import SessionLocal
+        db = SessionLocal()
+        try:
+            preload_initial_data(db)
+        finally:
+            db.close()
+
+        res2 = client.get("/api/v1/audit-log?event_type=INITIALIZE_DATASET")
+        assert res2.status_code == 200
+        reboot_entries = res2.json()
+
+        assert len(reboot_entries) == len(initial_entries)
+
+

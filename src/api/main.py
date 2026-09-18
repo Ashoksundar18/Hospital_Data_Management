@@ -107,9 +107,6 @@ async def lifespan(app: FastAPI):
         preload_initial_data(db)
     finally:
         db.close()
-    
-    startup_msg = f"[LIFESPAN] Database initialized cleanly. Active Backend Dialect: '{db_engine.dialect.name}'"
-    print(startup_msg)
     yield
 
 

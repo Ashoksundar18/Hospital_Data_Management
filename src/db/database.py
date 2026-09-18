@@ -26,6 +26,8 @@ for k, v in os.environ.items():
             raw_db_url = v.strip().strip('"\'')
             break
 
+is_render = bool(os.getenv("RENDER"))
+
 if raw_db_url:
     # Render provides postgres:// which SQLAlchemy 2.0 requires as postgresql://
     if raw_db_url.startswith("postgres://"):
@@ -33,6 +35,8 @@ if raw_db_url:
     else:
         SQLALCHEMY_DATABASE_URL = raw_db_url
     engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
+elif is_render:
+    raise RuntimeError("DATABASE_URL environment variable is required when running on Render, but was missing or empty.")
 else:
     # Fallback to local SQLite database for local development
     DB_DIR = os.path.join("data")
@@ -44,12 +48,9 @@ else:
         connect_args={"check_same_thread": False}
     )
 
+# Single standardized log line for database initialization
+logger.info(f"[DB_INIT] dialect={engine.dialect.name} driver={engine.driver}")
 
-
-# Log database dialect directly at startup
-startup_msg = f"[DB_INIT] Connected Database Backend Dialect: '{engine.dialect.name}'"
-print(startup_msg)
-logger.info(startup_msg)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

@@ -83,11 +83,12 @@ def test_phase2_governance_endpoints():
         assert res_override.json()["approval_status"] == "overridden"
 
 
-def test_db_info_endpoint():
+def test_db_info_endpoint_allowed_keys_only():
     with TestClient(app) as client:
         response = client.get("/api/v1/db-info")
         assert response.status_code == 200
         data = response.json()
-        assert "dialect" in data
+        assert set(data.keys()) == {"dialect", "driver", "url_scheme"}
         assert data["dialect"] in ["sqlite", "postgresql"]
+
 
