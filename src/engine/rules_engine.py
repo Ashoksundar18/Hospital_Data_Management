@@ -7,9 +7,10 @@ from src.models.recommendation import (
     ConfidenceTier,
     ImpactTier,
     DataCompletenessFlag,
+    ApprovalStatus,
 )
 
-# Ordered progression of storage tiers from warmest to coldest
+# Ordered progression of storage tiers from warmest (index 0) to coldest (index 4)
 TIER_ORDER = [
     StorageClass.HOT,
     StorageClass.COOL,
@@ -23,20 +24,25 @@ LARGE_OBJECT_THRESHOLD_BYTES = 50 * 1024 * 1024 * 1024  # 50 GB
 
 class LifecycleRulesEngine:
     """
-    Deterministic, explainable storage lifecycle recommendation engine.
+    Deterministic, explainable storage lifecycle recommendation engine (Phase 2).
     
-    Rule Set:
+    Rule Catalog:
     1. RULE_LEGAL_HOLD: Hard compliance lock. Legal hold forces NO_ACTION.
        Confidence: ALWAYS HIGH (does not depend on access/restore telemetry).
+       Governance: Sets requires_periodic_review = True.
     2. RULE_RETENTION_LOCK: Blocks DELETE recommendations if age < min_retention_days.
-       Confidence: ALWAYS HIGH (age and retention rules are known metadata).
-    3. RULE_EXPIRATION_DELETE: Recommends DELETE if age >= max_lifecycle_days and retention is satisfied.
-       Confidence: ALWAYS HIGH (based on verified age and retention threshold).
-    4. RULE_RECENT_RESTORE: Defers colder tier transitions if object was restored within 30 days.
+       Confidence: ALWAYS HIGH.
+       Governance: Sets requires_periodic_review = True for NO_ACTION outcomes.
+    3. RULE_RETRIEVAL_SLA (Phase 2): Blocks or downgrades transitions to tiers colder than
+       min_retrieval_tier specified by applicable RetentionRule.
+       Confidence: ALWAYS HIGH.
+    4. RULE_EXPIRATION_DELETE: Recommends DELETE if age >= max_lifecycle_days and retention is satisfied.
+       Confidence: ALWAYS HIGH.
+    5. RULE_RECENT_RESTORE: Defers colder tier transitions if object was restored within 30 days.
        Confidence: LOW if restore telemetry is missing; HIGH if complete.
-    5. RULE_AGE_ACCESS_TRANSITION: Recommends step-down storage class transitions based on age & access frequency.
+    6. RULE_AGE_ACCESS_TRANSITION: Recommends step-down storage class transitions based on age & access frequency.
        Confidence: LOW if access telemetry is missing (uses age fallback path).
-    6. RULE_NO_ACTION_DEFAULT: Issued when no tier change or deletion is warranted.
+    7. RULE_NO_ACTION_DEFAULT: Issued when no tier change or deletion is warranted.
        Confidence: HIGH if telemetry complete; LOW if telemetry missing.
     """
 
@@ -61,18 +67,6 @@ class LifecycleRulesEngine:
         target_class: Optional[StorageClass],
         obj: StorageObject
     ) -> ImpactTier:
-        """
-        Explicit, deterministic calculation of Impact/Risk Tier:
-        - HIGH_IMPACT:
-            1. Any DELETE action (irreversible object destruction).
-            2. Any transition to ARCHIVE or DEEP_ARCHIVE (retrieval latency of hours/days + early deletion fees).
-            3. Any transition of MEDICAL_IMAGE classification (high clinical criticality).
-            4. Any transition on large objects (> 50 GB).
-        - MEDIUM_IMPACT:
-            1. Online tier transitions (HOT -> COOL, COOL -> COLD) for APP_LOG or BACKUP.
-        - LOW_IMPACT:
-            1. Any NO_ACTION decision.
-        """
         if action == RecommendedAction.NO_ACTION:
             return ImpactTier.LOW_IMPACT
 
@@ -123,14 +117,15 @@ class LifecycleRulesEngine:
             "legal_hold": obj.legal_hold,
             "retention_rule_id": applicable_rule.id if applicable_rule else None,
             "min_retention_days": min_retention_days,
+            "min_retrieval_tier": applicable_rule.min_retrieval_tier.value if (applicable_rule and applicable_rule.min_retrieval_tier) else None,
+            "max_retrieval_latency_hours": applicable_rule.max_retrieval_latency_hours if applicable_rule else None,
             "retention_satisfied": obj.object_age_days >= min_retention_days,
             "missing_access_data": missing_access,
             "missing_restore_data": missing_restore,
         }
 
         # RULE 1: Legal Hold Check (Hard compliance invariant)
-        # Note: Legal hold confidence is ALWAYS HIGH because legal_hold status is known metadata
-        # and does NOT depend on access frequency or restore telemetry.
+        # Periodic Review: Compliance-sensitive NO_ACTION items set requires_periodic_review = True
         if obj.legal_hold:
             return Recommendation(
                 object_id=obj.id,
@@ -139,9 +134,11 @@ class LifecycleRulesEngine:
                 target_storage_class=None,
                 triggering_rules=["RULE_LEGAL_HOLD"],
                 evidence_snapshot=evidence,
-                confidence_tier=ConfidenceTier.HIGH,  # RULE-SCOPED CONFIDENCE: Always HIGH for Legal Hold!
+                confidence_tier=ConfidenceTier.HIGH,
                 impact_tier=ImpactTier.LOW_IMPACT,
                 data_completeness_flag=completeness,
+                approval_status=ApprovalStatus.PENDING,
+                requires_periodic_review=True,  # Phase 2 Compliance Review Flag
                 reasoning_summary="Object is under legal hold. Deletion and storage class transitions are strictly prohibited by compliance policy."
             )
 
@@ -165,9 +162,11 @@ class LifecycleRulesEngine:
                     target_storage_class=None,
                     triggering_rules=["RULE_RETENTION_LOCK"],
                     evidence_snapshot=evidence,
-                    confidence_tier=ConfidenceTier.HIGH,  # Retention lock relies on age & retention rule -> Always HIGH
+                    confidence_tier=ConfidenceTier.HIGH,
                     impact_tier=ImpactTier.LOW_IMPACT,
                     data_completeness_flag=completeness,
+                    approval_status=ApprovalStatus.PENDING,
+                    requires_periodic_review=True,  # Phase 2 Compliance Review Flag
                     reasoning_summary=f"Object age ({obj.object_age_days}d) exceeds maximum lifecycle policy, but minimum retention period ({min_retention_days}d) is not satisfied. Deletion blocked by retention rule '{applicable_rule.id if applicable_rule else 'default'}'."
                 )
             else:
@@ -178,14 +177,15 @@ class LifecycleRulesEngine:
                     target_storage_class=None,
                     triggering_rules=["RULE_EXPIRATION_DELETE"],
                     evidence_snapshot=evidence,
-                    confidence_tier=ConfidenceTier.HIGH,  # Deletion threshold is satisfied -> Always HIGH
+                    confidence_tier=ConfidenceTier.HIGH,
                     impact_tier=ImpactTier.HIGH_IMPACT,
                     data_completeness_flag=completeness,
+                    approval_status=ApprovalStatus.PENDING,
+                    requires_periodic_review=False,
                     reasoning_summary=f"Object age ({obj.object_age_days}d) exceeds lifecycle expiration threshold ({max_lifecycle_days}d) and retention requirement ({min_retention_days}d) is satisfied. Recommended for deletion."
                 )
 
         # RULE 3: Recent Restore Event Protection
-        # Depends on restore history. If restore telemetry is missing, flag lower confidence.
         if recent_restore_detected:
             restore_confidence = ConfidenceTier.LOW if missing_restore else ConfidenceTier.HIGH
             return Recommendation(
@@ -198,37 +198,78 @@ class LifecycleRulesEngine:
                 confidence_tier=restore_confidence,
                 impact_tier=ImpactTier.LOW_IMPACT,
                 data_completeness_flag=completeness,
+                approval_status=ApprovalStatus.PENDING,
+                requires_periodic_review=False,
                 reasoning_summary="Object was restored within the last 30 days. Transition to colder storage class is deferred to prevent re-access performance penalties."
             )
 
-        # RULE 4: Tier Transition Evaluation
-        target_tier, trigger_rule, transition_reason = self._evaluate_tier_transition(obj, missing_access)
+        # RULE 4: Tier Transition & RULE_RETRIEVAL_SLA Evaluation
+        candidate_tier, trigger_rule, transition_reason = self._evaluate_tier_transition(obj, missing_access)
 
-        if target_tier and target_tier != obj.current_storage_class:
-            trigger_list = [trigger_rule]
+        if candidate_tier and candidate_tier != obj.current_storage_class:
+            final_target_tier = candidate_tier
+            retrieval_sla_triggered = False
+
+            # Phase 2 RULE_RETRIEVAL_SLA check
+            if applicable_rule and applicable_rule.min_retrieval_tier:
+                min_tier = applicable_rule.min_retrieval_tier
+                curr_idx = TIER_ORDER.index(obj.current_storage_class)
+                cand_idx = TIER_ORDER.index(candidate_tier)
+                min_idx = TIER_ORDER.index(min_tier)
+
+                if cand_idx > min_idx:
+                    # Candidate tier is colder than allowed min_retrieval_tier
+                    retrieval_sla_triggered = True
+                    if curr_idx < min_idx:
+                        # Downgrade target to min_retrieval_tier
+                        final_target_tier = min_tier
+                        transition_reason = f"Transition downgraded to {min_tier.value}: Candidate tier {candidate_tier.value} violates retention rule retrieval SLA constraint (min_retrieval_tier: {min_tier.value})."
+                    else:
+                        # Current class is already at or colder than min_retrieval_tier -> block further transition
+                        final_target_tier = None
+
+            if final_target_tier is None:
+                # Transition blocked by RULE_RETRIEVAL_SLA
+                return Recommendation(
+                    object_id=obj.id,
+                    current_class=obj.current_storage_class,
+                    recommended_action=RecommendedAction.NO_ACTION,
+                    target_storage_class=None,
+                    triggering_rules=["RULE_RETRIEVAL_SLA"],
+                    evidence_snapshot=evidence,
+                    confidence_tier=ConfidenceTier.HIGH,
+                    impact_tier=ImpactTier.LOW_IMPACT,
+                    data_completeness_flag=completeness,
+                    approval_status=ApprovalStatus.PENDING,
+                    requires_periodic_review=False,
+                    reasoning_summary=f"Storage class transition blocked by retention rule retrieval SLA: Object is in {obj.current_storage_class.value} and may not go colder than {applicable_rule.min_retrieval_tier.value}."
+                )
+
+            trigger_list = ["RULE_RETRIEVAL_SLA" if retrieval_sla_triggered else trigger_rule]
             rule_confidence = ConfidenceTier.HIGH
             if missing_access or missing_restore:
                 trigger_list.append("RULE_MISSING_DATA_FALLBACK")
                 rule_confidence = ConfidenceTier.LOW
                 transition_reason += f" (Note: Evaluated under conservative fallback due to missing telemetry: {completeness.value})."
 
-            impact = self.calculate_impact_tier(RecommendedAction.TRANSITION, target_tier, obj)
+            impact = self.calculate_impact_tier(RecommendedAction.TRANSITION, final_target_tier, obj)
 
             return Recommendation(
                 object_id=obj.id,
                 current_class=obj.current_storage_class,
                 recommended_action=RecommendedAction.TRANSITION,
-                target_storage_class=target_tier,
+                target_storage_class=final_target_tier,
                 triggering_rules=trigger_list,
                 evidence_snapshot=evidence,
                 confidence_tier=rule_confidence,
                 impact_tier=impact,
                 data_completeness_flag=completeness,
+                approval_status=ApprovalStatus.PENDING,
+                requires_periodic_review=False,
                 reasoning_summary=transition_reason
             )
 
         # RULE 5: Default No Action Required
-        # Triggered when object is appropriately tiered and no action is warranted.
         default_confidence = ConfidenceTier.LOW if (missing_access or missing_restore) else ConfidenceTier.HIGH
         default_summary = f"Object is appropriately tiered in {obj.current_storage_class.value} (age: {obj.object_age_days}d)."
         if missing_access or missing_restore:
@@ -244,6 +285,8 @@ class LifecycleRulesEngine:
             confidence_tier=default_confidence,
             impact_tier=ImpactTier.LOW_IMPACT,
             data_completeness_flag=completeness,
+            approval_status=ApprovalStatus.PENDING,
+            requires_periodic_review=False,
             reasoning_summary=default_summary
         )
 

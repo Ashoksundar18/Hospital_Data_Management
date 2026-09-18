@@ -1,6 +1,6 @@
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator
-from .storage_object import DataClassification
+from .storage_object import DataClassification, StorageClass
 
 
 class RetentionRule(BaseModel):
@@ -13,6 +13,13 @@ class RetentionRule(BaseModel):
     )
     min_retention_days: int = Field(
         ..., ge=0, description="Minimum required retention period in days before deletion is permitted"
+    )
+    # Phase 2 Retrieval-SLA parameters
+    min_retrieval_tier: Optional[StorageClass] = Field(
+        None, description="Minimum allowed storage class tier while retention-locked (e.g. COLD or COOL). Transitions colder than this tier are blocked."
+    )
+    max_retrieval_latency_hours: Optional[int] = Field(
+        None, ge=0, description="Maximum permitted data retrieval latency SLA in hours."
     )
     legal_hold_override_behavior: str = Field(
         "PRESERVE_INDEFINITELY",
