@@ -1,4 +1,4 @@
-from .database import engine, SessionLocal, Base, get_db, init_db
+from .database import engine, SessionLocal, Base, get_db, init_db, get_db_backend_info
 from .db_models import (
     StorageObjectDB,
     RetentionRuleDB,
@@ -13,9 +13,11 @@ __all__ = [
     "Base",
     "get_db",
     "init_db",
+    "get_db_backend_info",
     "StorageObjectDB",
     "RetentionRuleDB",
     "RecommendationDB",
     "ConfirmationOverrideDB",
     "AuditLogDB",
 ]
+

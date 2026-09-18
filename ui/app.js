@@ -3,6 +3,7 @@ let allAuditLogs = [];
 let currentSelectedRecId = null;
 
 document.addEventListener('DOMContentLoaded', () => {
+    fetchDbInfo();
     fetchRecommendations();
 
     document.getElementById('filter-classification').addEventListener('change', applyFilters);
@@ -15,6 +16,23 @@ document.addEventListener('DOMContentLoaded', () => {
         otherGroup.style.display = e.target.value === 'OTHER' ? 'flex' : 'none';
     });
 });
+
+async function fetchDbInfo() {
+    try {
+        const response = await fetch('/api/v1/db-info');
+        if (response.ok) {
+            const data = await response.json();
+            const labelEl = document.getElementById('db-backend-label');
+            if (labelEl && data.dialect) {
+                const dialectName = data.dialect === 'postgresql' ? 'PostgreSQL' : (data.dialect === 'sqlite' ? 'SQLite' : data.dialect);
+                labelEl.textContent = `${dialectName} Persistence`;
+            }
+        }
+    } catch (err) {
+        console.warn('Could not fetch DB info:', err);
+    }
+}
+
 
 function switchTab(tabName) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));

@@ -13,6 +13,7 @@ from src.db import (
     SessionLocal,
     init_db,
     get_db,
+    get_db_backend_info,
     StorageObjectDB,
     RetentionRuleDB,
     RecommendationDB,
@@ -38,8 +39,8 @@ from src.engine import LifecycleRulesEngine
 from src.services import write_audit_entry, verify_audit_chain
 
 
-def preload_initial_data_to_sqlite(db: Session):
-    """Preloads retention rules and synthetic dataset into SQLite database if empty."""
+def preload_initial_data(db: Session):
+    """Preloads retention rules and synthetic dataset into database if empty."""
     # Preload retention rules
     if db.query(RetentionRuleDB).count() == 0:
         retention_path = os.path.join("data", "retention_rules.json")
@@ -90,8 +91,12 @@ def preload_initial_data_to_sqlite(db: Session):
                 db,
                 event_type="INITIALIZE_DATASET",
                 actor="SYSTEM",
-                details={"message": "Preloaded synthetic dataset and retention rules into SQLite database."}
+                details={"message": f"Preloaded synthetic dataset and retention rules into database ({db_engine.dialect.name})."}
             )
+
+
+# Backward compatibility alias
+preload_initial_data_to_sqlite = preload_initial_data
 
 
 @asynccontextmanager
@@ -99,15 +104,18 @@ async def lifespan(app: FastAPI):
     init_db()
     db = SessionLocal()
     try:
-        preload_initial_data_to_sqlite(db)
+        preload_initial_data(db)
     finally:
         db.close()
+    
+    startup_msg = f"[LIFESPAN] Database initialized cleanly. Active Backend Dialect: '{db_engine.dialect.name}'"
+    print(startup_msg)
     yield
 
 
 app = FastAPI(
     title="Storage Lifecycle Recommender API (Phase 2 Governance)",
-    description="Responsible-AI automated storage lifecycle recommender with SQLite persistence, human approval, and hash-chained audit logging.",
+    description="Responsible-AI automated storage lifecycle recommender with PostgreSQL / SQLite persistence, human approval, and hash-chained audit logging.",
     version="2.0.0",
     lifespan=lifespan
 )
@@ -115,6 +123,13 @@ app = FastAPI(
 # Mount UI static files if directory exists
 if os.path.exists("ui"):
     app.mount("/static", StaticFiles(directory="ui"), name="static")
+
+
+@app.get("/api/v1/db-info")
+def get_db_info():
+    """Returns active database backend dialect and engine metadata."""
+    return get_db_backend_info()
+
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -251,7 +266,8 @@ def get_recommendations(
     db: Session = Depends(get_db)
 ):
     """
-    Runs the rules engine on persisted storage objects, saves/syncs recommendations in SQLite DB, and returns structured outputs.
+    Runs the rules engine on persisted storage objects, saves/syncs recommendations in DB, and returns structured outputs.
+    Optimized with bulk DB queries and single-commit batch syncing for instant response times.
     """
     db_rules = db.query(RetentionRuleDB).all()
     pydantic_rules = [db_rule_to_pydantic(r) for r in db_rules]
@@ -262,20 +278,50 @@ def get_recommendations(
 
     calculated_recs = engine.evaluate_batch(pydantic_objects)
 
+    # 1. Bulk map of existing recommendation records
+    existing_recs_map = {r.object_id: r for r in db.query(RecommendationDB).all()}
+
+    # 2. Bulk map of latest human governance action per object
+    gov_events = db.query(ConfirmationOverrideDB).order_by(ConfirmationOverrideDB.timestamp.asc()).all()
+    gov_map = {}
+    for g in gov_events:
+        gov_map[g.object_id] = g
+
     output_recommendations = []
+    has_changes = False
 
     for rec in calculated_recs:
-        # Check if recommendation record exists in DB for this object
-        existing_rec = db.query(RecommendationDB).filter(RecommendationDB.object_id == rec.object_id).first()
+        latest_gov = gov_map.get(rec.object_id)
+        existing_rec = existing_recs_map.get(rec.object_id)
+
+        # Determine canonical governance status from ConfirmationOverrideDB & RecommendationDB
+        if latest_gov:
+            if latest_gov.action_type == "CONFIRM":
+                status_str = ApprovalStatus.CONFIRMED.value
+            elif latest_gov.action_type == "OVERRIDE":
+                status_str = ApprovalStatus.OVERRIDDEN.value
+            elif latest_gov.action_type == "ROLLBACK":
+                status_str = ApprovalStatus.ROLLED_BACK.value
+            elif latest_gov.action_type == "PERIODIC_REVIEW":
+                status_str = existing_rec.approval_status if existing_rec else ApprovalStatus.PENDING.value
+            else:
+                status_str = existing_rec.approval_status if existing_rec else ApprovalStatus.PENDING.value
+        elif existing_rec:
+            status_str = existing_rec.approval_status
+        else:
+            status_str = ApprovalStatus.PENDING.value
+
+        last_reviewed = None
+        if latest_gov and latest_gov.action_type == "PERIODIC_REVIEW":
+            last_reviewed = latest_gov.timestamp
+        elif existing_rec:
+            last_reviewed = existing_rec.last_reviewed_at
+
+        rec.approval_status = ApprovalStatus(status_str)
+        rec.last_reviewed_at = last_reviewed
 
         if existing_rec:
-            # Preserve governance fields from existing record
             rec.id = existing_rec.id
-            rec.approval_status = ApprovalStatus(existing_rec.approval_status)
-            rec.requires_periodic_review = existing_rec.requires_periodic_review
-            rec.last_reviewed_at = existing_rec.last_reviewed_at
-
-            # Update engine calculation fields
             existing_rec.current_class = rec.current_class.value
             existing_rec.recommended_action = rec.recommended_action.value
             existing_rec.target_storage_class = rec.target_storage_class.value if rec.target_storage_class else None
@@ -284,11 +330,12 @@ def get_recommendations(
             existing_rec.confidence_tier = rec.confidence_tier.value
             existing_rec.impact_tier = rec.impact_tier.value
             existing_rec.data_completeness_flag = rec.data_completeness_flag.value
+            existing_rec.approval_status = status_str
             existing_rec.requires_periodic_review = rec.requires_periodic_review
+            existing_rec.last_reviewed_at = last_reviewed
             existing_rec.reasoning_summary = rec.reasoning_summary
-            db.commit()
+            has_changes = True
         else:
-            # Insert new recommendation record into DB
             db_rec = RecommendationDB(
                 id=rec.id,
                 object_id=rec.object_id,
@@ -300,27 +347,15 @@ def get_recommendations(
                 confidence_tier=rec.confidence_tier.value,
                 impact_tier=rec.impact_tier.value,
                 data_completeness_flag=rec.data_completeness_flag.value,
-                approval_status=rec.approval_status.value,
+                approval_status=status_str,
                 requires_periodic_review=rec.requires_periodic_review,
+                last_reviewed_at=last_reviewed,
                 reasoning_summary=rec.reasoning_summary,
                 timestamp=datetime.datetime.now(datetime.timezone.utc)
             )
             db.add(db_rec)
-            db.commit()
-
-            write_audit_entry(
-                db,
-                event_type="GENERATE_RECOMMENDATION",
-                actor="RULES_ENGINE",
-                object_id=rec.object_id,
-                recommendation_id=rec.id,
-                details={
-                    "recommended_action": rec.recommended_action.value,
-                    "target_class": rec.target_storage_class.value if rec.target_storage_class else None,
-                    "impact_tier": rec.impact_tier.value,
-                    "triggering_rules": rec.triggering_rules
-                }
-            )
+            existing_recs_map[rec.object_id] = db_rec
+            has_changes = True
 
         # Apply endpoint query filters
         if classification and rec.evidence_snapshot.get("data_classification") != classification.value:
@@ -333,6 +368,9 @@ def get_recommendations(
             continue
 
         output_recommendations.append(rec)
+
+    if has_changes:
+        db.commit()
 
     return output_recommendations
 
