@@ -559,6 +559,105 @@ def test_rollback_non_confirmed_recommendation_returns_409_conflict():
         assert "must be confirmed or overridden" in res_rlb.json()["detail"]
 
 
+def test_legal_hold_and_delete_justification_enforcement():
+    """
+    Verifies server-side legal hold protection and justification requirements:
+    - Confirming/overriding transition or deletion on legal_hold=True object returns 400.
+    - Confirming NO_ACTION on legal_hold=True object succeeds.
+    - Confirming/overriding DELETE action without non-empty justification returns 400.
+    - Confirming DELETE action with valid justification succeeds.
+    """
+    with TestClient(app) as client:
+        # 1. Ingest object with legal_hold=False so it gets a TRANSITION recommendation
+        client.post("/api/v1/objects", json={
+            "id": "obj-lh-transition-01",
+            "bucket_or_account": "b-legal-hold",
+            "cloud_provider": "AWS",
+            "data_classification": "BACKUP",
+            "current_storage_class": "HOT",
+            "size_bytes": 1000,
+            "object_age_days": 120,
+            "legal_hold": False
+        })
+        client.get("/api/v1/recommendations")
+
+        # Now put object under legal hold (e.g. legal hold is enabled after rec was generated)
+        from src.db import SessionLocal, StorageObjectDB
+        db = SessionLocal()
+        try:
+            obj_db = db.query(StorageObjectDB).filter(StorageObjectDB.id == "obj-lh-transition-01").first()
+            obj_db.legal_hold = True
+            db.commit()
+        finally:
+            db.close()
+
+        # Confirm transition on legal hold object -> 400 Bad Request
+        res_conf_lh = client.post("/api/v1/recommendations/obj-lh-transition-01/confirm", json={"reviewer_id": "usr-1"})
+        assert res_conf_lh.status_code == 400
+        assert "legal hold" in res_conf_lh.json()["detail"].lower()
+
+        # Override transition on legal hold object -> 400 Bad Request
+        res_ovr_lh = client.post("/api/v1/recommendations/obj-lh-transition-01/override", json={
+            "reviewer_id": "usr-1",
+            "override_reason": "PENDING_CLINICAL_TRIAL"
+        })
+        assert res_ovr_lh.status_code == 400
+        assert "legal hold" in res_ovr_lh.json()["detail"].lower()
+
+        # 2. Ingest legal_hold=True object with NO_ACTION recommendation (e.g. MEDICAL_IMAGE under retention)
+        client.post("/api/v1/objects", json={
+            "id": "obj-lh-noaction-01",
+            "bucket_or_account": "b-legal-hold",
+            "cloud_provider": "AWS",
+            "data_classification": "MEDICAL_IMAGE",
+            "current_storage_class": "HOT",
+            "size_bytes": 1000,
+            "object_age_days": 100,
+            "legal_hold": True
+        })
+        client.get("/api/v1/recommendations")
+
+        # Confirm NO_ACTION on legal hold object -> 200 OK
+        res_conf_noaction = client.post("/api/v1/recommendations/obj-lh-noaction-01/confirm", json={"reviewer_id": "usr-1"})
+        assert res_conf_noaction.status_code == 200
+        assert res_conf_noaction.json()["approval_status"] == "confirmed"
+
+        # 3. Ingest object qualifying for DELETE recommendation (e.g., APP_LOG object age 400 days > max_lifecycle 365)
+        client.post("/api/v1/objects", json={
+            "id": "obj-delete-01",
+            "bucket_or_account": "b-delete",
+            "cloud_provider": "AWS",
+            "data_classification": "APP_LOG",
+            "current_storage_class": "HOT",
+            "size_bytes": 1000,
+            "object_age_days": 400,
+            "legal_hold": False
+        })
+        client.get("/api/v1/recommendations")
+
+        # Confirm DELETE without justification -> 400 Bad Request
+        res_conf_del_no_just = client.post("/api/v1/recommendations/obj-delete-01/confirm", json={"reviewer_id": "usr-1"})
+        assert res_conf_del_no_just.status_code == 400
+        assert "justification" in res_conf_del_no_just.json()["detail"].lower()
+
+        # Confirm DELETE with whitespace-only justification -> 400 Bad Request
+        res_conf_del_blank_just = client.post("/api/v1/recommendations/obj-delete-01/confirm", json={
+            "reviewer_id": "usr-1",
+            "justification": "   "
+        })
+        assert res_conf_del_blank_just.status_code == 400
+        assert "justification" in res_conf_del_blank_just.json()["detail"].lower()
+
+        # Confirm DELETE with valid justification -> 200 OK
+        res_conf_del_ok = client.post("/api/v1/recommendations/obj-delete-01/confirm", json={
+            "reviewer_id": "usr-1",
+            "justification": "Approved for deletion as temporary scratch data is expired"
+        })
+        assert res_conf_del_ok.status_code == 200
+        assert res_conf_del_ok.json()["approval_status"] == "confirmed"
+
+
+
 
 
 

@@ -404,9 +404,27 @@ def confirm_recommendation(
     if not rec_db:
         raise HTTPException(status_code=404, detail=f"Recommendation for ID '{rec_id_or_obj_id}' not found")
 
+    # SERVER-SIDE RULE 1: Legal Hold check - Reject actions that change object (TRANSITION or DELETE)
+    obj_db = db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first()
+    if obj_db and obj_db.legal_hold:
+        if rec_db.recommended_action in [RecommendedAction.TRANSITION.value, RecommendedAction.DELETE.value] or rec_db.target_storage_class:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot confirm transition or deletion action on an object under legal hold."
+            )
+
+    # SERVER-SIDE RULE 2: Require non-empty justification for DELETE recommendations
+    if rec_db.recommended_action == RecommendedAction.DELETE.value:
+        justification_val = (body.justification or "").strip()
+        if not justification_val:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A non-empty justification is strictly required when confirming a DELETE recommendation."
+            )
+
     # IDEMPOTENCY CHECK: If already confirmed, return current record without creating duplicate governance/audit rows
     if rec_db.approval_status == ApprovalStatus.CONFIRMED.value:
-        pydantic_obj = db_obj_to_pydantic(db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first())
+        pydantic_obj = db_obj_to_pydantic(obj_db) if obj_db else db_obj_to_pydantic(db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first())
         engine = LifecycleRulesEngine()
         rec = engine.evaluate_object(pydantic_obj)
         rec.id = rec_db.id
@@ -417,13 +435,15 @@ def confirm_recommendation(
 
     rec_db.approval_status = ApprovalStatus.CONFIRMED.value
 
+    reviewer_id = body.reviewer_id or "usr-reviewer"
+
     # Record confirmation governance row
     conf_record = ConfirmationOverrideDB(
         id=f"conf-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
         recommendation_id=rec_db.id,
         object_id=rec_db.object_id,
         action_type="CONFIRM",
-        reviewer_id=body.reviewer_id,
+        reviewer_id=reviewer_id,
         timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
     db.add(conf_record)
@@ -431,12 +451,12 @@ def confirm_recommendation(
     write_audit_entry(
         db,
         event_type="CONFIRM_RECOMMENDATION",
-        actor=body.reviewer_id,
+        actor=reviewer_id,
         object_id=rec_db.object_id,
         recommendation_id=rec_db.id,
         details={
             "action": "CONFIRM",
-            "reviewer_id": body.reviewer_id,
+            "reviewer_id": reviewer_id,
             "impact_tier": rec_db.impact_tier,
             "recommended_action": rec_db.recommended_action
         },
@@ -445,7 +465,7 @@ def confirm_recommendation(
     db.commit()
     db.refresh(rec_db)
 
-    pydantic_obj = db_obj_to_pydantic(db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first())
+    pydantic_obj = db_obj_to_pydantic(obj_db) if obj_db else db_obj_to_pydantic(db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first())
     engine = LifecycleRulesEngine()
     rec = engine.evaluate_object(pydantic_obj)
     rec.id = rec_db.id
@@ -469,16 +489,37 @@ def override_recommendation(
     if not rec_db:
         raise HTTPException(status_code=404, detail=f"Recommendation for ID '{rec_id_or_obj_id}' not found")
 
+    # SERVER-SIDE RULE 1: Legal Hold check - Reject actions that change object (TRANSITION or DELETE)
+    obj_db = db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first()
+    if obj_db and obj_db.legal_hold:
+        if rec_db.recommended_action in [RecommendedAction.TRANSITION.value, RecommendedAction.DELETE.value] or rec_db.target_storage_class:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot override transition or deletion action on an object under legal hold."
+            )
+
+    # SERVER-SIDE RULE 2: Require non-empty justification for DELETE recommendations
+    if rec_db.recommended_action == RecommendedAction.DELETE.value:
+        justification_val = (body.other_reason_text or body.justification or "").strip()
+        if not justification_val:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A non-empty justification is strictly required when overriding a DELETE recommendation."
+            )
+
     rec_db.approval_status = ApprovalStatus.OVERRIDDEN.value
+
+    reviewer_id = body.reviewer_id or "usr-reviewer"
+    other_text = body.other_reason_text or body.justification
 
     override_record = ConfirmationOverrideDB(
         id=f"ovr-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
         recommendation_id=rec_db.id,
         object_id=rec_db.object_id,
         action_type="OVERRIDE",
-        reviewer_id=body.reviewer_id,
+        reviewer_id=reviewer_id,
         override_reason_taxonomy=body.override_reason.value,
-        other_reason_text=body.other_reason_text,
+        other_reason_text=other_text,
         timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
     db.add(override_record)
@@ -486,14 +527,14 @@ def override_recommendation(
     write_audit_entry(
         db,
         event_type="OVERRIDE_RECOMMENDATION",
-        actor=body.reviewer_id,
+        actor=reviewer_id,
         object_id=rec_db.object_id,
         recommendation_id=rec_db.id,
         details={
             "action": "OVERRIDE",
-            "reviewer_id": body.reviewer_id,
+            "reviewer_id": reviewer_id,
             "override_reason_taxonomy": body.override_reason.value,
-            "other_reason_text": body.other_reason_text,
+            "other_reason_text": other_text,
             "impact_tier": rec_db.impact_tier
         },
         auto_commit=False
@@ -501,7 +542,7 @@ def override_recommendation(
     db.commit()
     db.refresh(rec_db)
 
-    pydantic_obj = db_obj_to_pydantic(db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first())
+    pydantic_obj = db_obj_to_pydantic(obj_db) if obj_db else db_obj_to_pydantic(db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first())
     engine = LifecycleRulesEngine()
     rec = engine.evaluate_object(pydantic_obj)
     rec.id = rec_db.id

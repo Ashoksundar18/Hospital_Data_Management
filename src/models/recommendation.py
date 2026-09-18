@@ -93,18 +93,21 @@ class Recommendation(BaseModel):
 # --- Phase 2 Human Workflow & Audit Request/Response Models ---
 
 class ConfirmRequest(BaseModel):
-    reviewer_id: str = Field(..., description="Identifier of the human reviewer approving the recommendation")
+    reviewer_id: Optional[str] = Field(None, description="Identifier of the human reviewer approving the recommendation")
+    justification: Optional[str] = Field(None, description="Justification text required when confirming DELETE recommendations")
 
 
 class OverrideRequest(BaseModel):
-    reviewer_id: str = Field(..., description="Identifier of the human reviewer overriding the recommendation")
+    reviewer_id: Optional[str] = Field(None, description="Identifier of the human reviewer overriding the recommendation")
     override_reason: OverrideReasonTaxonomy = Field(..., description="Structured taxonomy reason for override")
     other_reason_text: Optional[str] = Field(None, description="Detailed explanation required if override_reason is OTHER")
+    justification: Optional[str] = Field(None, description="Alternative field for override justification text")
 
     @model_validator(mode='after')
     def validate_other_text(self):
         if self.override_reason == OverrideReasonTaxonomy.OTHER:
-            if not self.other_reason_text or not self.other_reason_text.strip():
+            text_val = (self.other_reason_text or self.justification or "").strip()
+            if not text_val:
                 raise ValueError("Free-text detail 'other_reason_text' is strictly required when override_reason is OTHER")
         return self
 
