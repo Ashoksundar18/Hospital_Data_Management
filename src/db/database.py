@@ -1,9 +1,13 @@
 import os
 import logging
+from typing import Mapping, Optional
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-logger = logging.getLogger("uvicorn")
+from src.logging_config import configure_logging
+
+configure_logging()
+logger = logging.getLogger(__name__)
 
 # Parse local .env file if present
 env_path = os.path.join(os.getcwd(), ".env")
@@ -18,23 +22,38 @@ if os.path.exists(env_path):
     except Exception as e:
         logger.warning(f"Could not load .env file: {e}")
 
-# Read database URL case-insensitively from environment variables (handles Database_Url, DATABASE_URL, etc.)
-raw_db_url = None
-for k, v in os.environ.items():
-    if k.lower() in ("database_url", "internal_database_url", "external_database_url", "postgres_url", "postgresql_url"):
-        if v and v.strip():
-            raw_db_url = v.strip().strip('"\'')
-            break
+PRIORITY_KEYS = [
+    "database_url",
+    "internal_database_url",
+    "external_database_url",
+    "postgres_url",
+    "postgresql_url",
+]
 
+
+def resolve_database_url(environ: Mapping[str, str]) -> Optional[str]:
+    """
+    Extracts and normalizes the target database URL from an environment mapping in a
+    deterministic priority order. Performs case-insensitive key lookup and skips empty/whitespace values.
+    """
+    env_lower = {k.lower(): v for k, v in environ.items() if v is not None}
+
+    for key in PRIORITY_KEYS:
+        val = env_lower.get(key)
+        if val is not None:
+            stripped = val.strip().strip('"\'')
+            if stripped:
+                if stripped.startswith("postgres://"):
+                    return stripped.replace("postgres://", "postgresql://", 1)
+                return stripped
+    return None
+
+
+raw_db_url = resolve_database_url(os.environ)
 is_render = bool(os.getenv("RENDER"))
 
 if raw_db_url:
-    # Render provides postgres:// which SQLAlchemy 2.0 requires as postgresql://
-    if raw_db_url.startswith("postgres://"):
-        SQLALCHEMY_DATABASE_URL = raw_db_url.replace("postgres://", "postgresql://", 1)
-    else:
-        SQLALCHEMY_DATABASE_URL = raw_db_url
-    engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
+    engine = create_engine(raw_db_url, pool_pre_ping=True)
 elif is_render:
     raise RuntimeError("DATABASE_URL environment variable is required when running on Render, but was missing or empty.")
 else:
@@ -50,6 +69,7 @@ else:
 
 # Single standardized log line for database initialization
 logger.info(f"[DB_INIT] dialect={engine.dialect.name} driver={engine.driver}")
+
 
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

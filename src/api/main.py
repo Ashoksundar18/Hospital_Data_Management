@@ -8,6 +8,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
+from src.logging_config import configure_logging
+
+configure_logging()
+
+
 from src.db import (
     engine as db_engine,
     SessionLocal,

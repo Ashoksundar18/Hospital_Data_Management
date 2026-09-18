@@ -368,6 +368,7 @@ def test_no_duplicate_initialize_dataset_audit_entry_on_reboot():
         res1 = client.get("/api/v1/audit-log?event_type=INITIALIZE_DATASET")
         assert res1.status_code == 200
         initial_entries = res1.json()
+        assert len(initial_entries) == 1
 
         # Simulate secondary startup / preload call on existing DB session
         from src.api.main import preload_initial_data
@@ -383,5 +384,55 @@ def test_no_duplicate_initialize_dataset_audit_entry_on_reboot():
         reboot_entries = res2.json()
 
         assert len(reboot_entries) == len(initial_entries)
+
+
+def test_resolve_database_url_priority_and_normalization():
+    """
+    Tests resolve_database_url deterministic priority, case-insensitivity,
+    whitespace/empty skipping, quote stripping, and normalization.
+    """
+    from src.db.database import resolve_database_url
+
+    # (a) DATABASE_URL beats INTERNAL_DATABASE_URL and EXTERNAL_DATABASE_URL
+    env_a = {
+        "DATABASE_URL": "postgres://db1",
+        "INTERNAL_DATABASE_URL": "postgres://db2",
+        "EXTERNAL_DATABASE_URL": "postgres://db3",
+    }
+    assert resolve_database_url(env_a) == "postgresql://db1"
+
+    # (b) with only INTERNAL_DATABASE_URL and EXTERNAL_DATABASE_URL set, INTERNAL_DATABASE_URL wins
+    env_b = {
+        "INTERNAL_DATABASE_URL": "postgres://db2",
+        "EXTERNAL_DATABASE_URL": "postgres://db3",
+    }
+    assert resolve_database_url(env_b) == "postgresql://db2"
+
+    # (c) mixed-case key such as Database_Url is found
+    env_c = {
+        "Database_Url": "postgresql://db_mixed",
+    }
+    assert resolve_database_url(env_c) == "postgresql://db_mixed"
+
+    # (d) empty or whitespace-only values are skipped
+    env_d = {
+        "DATABASE_URL": "",
+        "INTERNAL_DATABASE_URL": "   ",
+        "EXTERNAL_DATABASE_URL": "postgres://real_ext",
+    }
+    assert resolve_database_url(env_d) == "postgresql://real_ext"
+
+    # (e) surrounding quotes are stripped
+    env_e = {
+        "DATABASE_URL": '"postgres://quoted_db"',
+    }
+    assert resolve_database_url(env_e) == "postgresql://quoted_db"
+
+    # (f) returns None when nothing is set
+    env_f = {
+        "SOME_OTHER_VAR": "value",
+    }
+    assert resolve_database_url(env_f) is None
+
 
 
