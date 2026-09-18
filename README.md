@@ -2,6 +2,8 @@
 
 A responsible-AI storage lifecycle recommender prototype built for hospital groups managing medical images, application logs, and database backups across multi-cloud environments (AWS, Azure, GCP).
 
+> **Deployment Status**: Live on Render with Hosted PostgreSQL Persistence & Hash-Chained Audit Logging.
+
 ---
 
 ## 🚀 Quickstart Guide (< 5 Minutes)
