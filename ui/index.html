@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hospital Storage Lifecycle Recommender (Phase 1 Prototype)</title>
+    <title>Hospital Storage Lifecycle Recommender (Phase 2 Governance)</title>
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -12,93 +12,140 @@
     <header>
         <div class="title-section">
             <h1>🏥 Hospital Storage Lifecycle Recommender</h1>
-            <p class="subtitle">Phase 1 Foundation Prototype — Responsible AI Multi-Cloud Storage Optimization</p>
+            <p class="subtitle">Phase 2 Governance & Human-in-the-Loop Layer — SQLite Persistence & Hash-Chained Audit Trail</p>
         </div>
     </header>
 
-    <!-- Metrics Overview Cards -->
-    <div class="metrics-grid">
-        <div class="metric-card">
-            <span class="metric-label">Total Evaluated Objects</span>
-            <span class="metric-value" id="metric-total">0</span>
+    <!-- Nav Tabs -->
+    <div class="nav-tabs">
+        <button class="tab-btn active" id="tab-btn-recs" onclick="switchTab('recommendations')">Recommendations Dashboard</button>
+        <button class="tab-btn" id="tab-btn-audit" onclick="switchTab('audit')">Cryptographic Audit Trail & Chain Verification</button>
+    </div>
+
+    <!-- TAB 1: RECOMMENDATIONS DASHBOARD -->
+    <div id="content-recs" class="tab-content" style="display: block;">
+        <!-- Metrics Overview Cards -->
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <span class="metric-label">Total Evaluated Objects</span>
+                <span class="metric-value" id="metric-total">0</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-label">Transition Recs</span>
+                <span class="metric-value transition" id="metric-transition">0</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-label">Delete Recs</span>
+                <span class="metric-value delete" id="metric-delete">0</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-label">Human Confirmed</span>
+                <span class="metric-value confirmed" id="metric-confirmed">0</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-label">Human Overridden</span>
+                <span class="metric-value overridden" id="metric-overridden">0</span>
+            </div>
         </div>
-        <div class="metric-card">
-            <span class="metric-label">Transition Recs</span>
-            <span class="metric-value transition" id="metric-transition">0</span>
+
+        <!-- Filter & Search Controls -->
+        <div class="controls-bar">
+            <div class="filter-group">
+                <label for="filter-classification">Classification</label>
+                <select id="filter-classification">
+                    <option value="ALL">All Classifications</option>
+                    <option value="MEDICAL_IMAGE">Medical Images</option>
+                    <option value="APP_LOG">Application Logs</option>
+                    <option value="BACKUP">Database Backups</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="filter-action">Recommended Action</label>
+                <select id="filter-action">
+                    <option value="ALL">All Actions</option>
+                    <option value="TRANSITION">TRANSITION</option>
+                    <option value="DELETE">DELETE</option>
+                    <option value="NO_ACTION">NO_ACTION</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="filter-status">Governance Status</label>
+                <select id="filter-status">
+                    <option value="ALL">All Statuses</option>
+                    <option value="pending">PENDING</option>
+                    <option value="confirmed">CONFIRMED</option>
+                    <option value="overridden">OVERRIDDEN</option>
+                    <option value="rolled_back">ROLLED_BACK</option>
+                </select>
+            </div>
+
+            <div class="filter-group" style="flex-grow: 1;">
+                <label for="search-input">Search Object ID / Bucket</label>
+                <input type="text" id="search-input" placeholder="Type object ID or bucket name...">
+            </div>
         </div>
-        <div class="metric-card">
-            <span class="metric-label">Delete Recs</span>
-            <span class="metric-value delete" id="metric-delete">0</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-label">Compliance Protected</span>
-            <span class="metric-value protected" id="metric-protected">0</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-label">Low Confidence (Missing Data)</span>
-            <span class="metric-value missing" id="metric-missing">0</span>
+
+        <!-- Recommendations Table -->
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Object & Cloud Info</th>
+                        <th>Storage Class & Age</th>
+                        <th>Recommended Action</th>
+                        <th>Impact / Risk</th>
+                        <th>Confidence</th>
+                        <th>Governance Status</th>
+                        <th>Triggering Rules</th>
+                        <th>Human Approval Controls</th>
+                    </tr>
+                </thead>
+                <tbody id="table-body">
+                    <tr>
+                        <td colspan="8" style="text-align: center; padding: 24px; color: #94a3b8;">
+                            Loading storage objects and running rules engine...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
     </div>
 
-    <!-- Filter & Search Controls -->
-    <div class="controls-bar">
-        <div class="filter-group">
-            <label for="filter-classification">Classification</label>
-            <select id="filter-classification">
-                <option value="ALL">All Classifications</option>
-                <option value="MEDICAL_IMAGE">Medical Images</option>
-                <option value="APP_LOG">Application Logs</option>
-                <option value="BACKUP">Database Backups</option>
-            </select>
+    <!-- TAB 2: AUDIT TRAIL & CHAIN VERIFICATION -->
+    <div id="content-audit" class="tab-content" style="display: none;">
+        <div class="controls-bar" style="justify-content: space-between;">
+            <div>
+                <h3 style="color: #38bdf8; font-size: 1.1rem;">Cryptographic Audit Trail Log</h3>
+                <p style="color: #94a3b8; font-size: 0.85rem;">Immutable, SHA-256 hash-chained record of all system and human governance events.</p>
+            </div>
+            <button class="tab-btn active" style="background: #15803d; border-radius: 6px;" onclick="verifyAuditChain()">Verify Audit Chain Integrity</button>
         </div>
 
-        <div class="filter-group">
-            <label for="filter-action">Recommended Action</label>
-            <select id="filter-action">
-                <option value="ALL">All Actions</option>
-                <option value="TRANSITION">TRANSITION</option>
-                <option value="DELETE">DELETE</option>
-                <option value="NO_ACTION">NO_ACTION</option>
-            </select>
-        </div>
+        <div id="audit-verify-status" style="display: none; padding: 12px; margin-bottom: 16px; border-radius: 6px; font-size: 0.9rem;"></div>
 
-        <div class="filter-group">
-            <label for="filter-data">Telemetry Feed Status</label>
-            <select id="filter-data">
-                <option value="ALL">All Feeds</option>
-                <option value="COMPLETE">Complete Data Only</option>
-                <option value="MISSING">Missing / Delayed Feeds</option>
-            </select>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Timestamp</th>
+                        <th>Event Type</th>
+                        <th>Actor</th>
+                        <th>Object ID</th>
+                        <th>Hash Signatures & Event Details</th>
+                    </tr>
+                </thead>
+                <tbody id="audit-table-body">
+                    <tr>
+                        <td colspan="6" style="text-align: center; padding: 24px; color: #94a3b8;">
+                            Loading audit trail log...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
-
-        <div class="filter-group" style="flex-grow: 1;">
-            <label for="search-input">Search Object ID / Bucket</label>
-            <input type="text" id="search-input" placeholder="Type object ID or bucket name...">
-        </div>
-    </div>
-
-    <!-- Recommendations Table -->
-    <div class="table-container">
-        <table>
-            <thead>
-                <tr>
-                    <th>Object & Cloud Info</th>
-                    <th>Storage Class & Age</th>
-                    <th>Recommended Action</th>
-                    <th>Impact / Risk</th>
-                    <th>Confidence</th>
-                    <th>Triggering Rules</th>
-                    <th>Evidence</th>
-                </tr>
-            </thead>
-            <tbody id="table-body">
-                <tr>
-                    <td colspan="7" style="text-align: center; padding: 24px; color: #94a3b8;">
-                        Loading storage objects and running rules engine...
-                    </td>
-                </tr>
-            </tbody>
-        </table>
     </div>
 </div>
 
@@ -110,12 +157,102 @@
             <button class="close-btn" onclick="closeModal()">&times;</button>
         </div>
         <div style="margin-bottom: 16px;">
-            <h4 style="font-size: 0.9rem; color: #94a3b8; margin-bottom: 4px;">REASONING SUMMARY</h4>
+            <h4 style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 4px;">REASONING SUMMARY</h4>
             <p id="modal-summary" style="background: #0f172a; padding: 12px; border-radius: 6px; border-left: 4px solid #38bdf8; font-size: 0.9rem;"></p>
         </div>
         <div>
-            <h4 style="font-size: 0.9rem; color: #94a3b8; margin-bottom: 4px;">STRUCTURED EVIDENCE & INPUT SNAPSHOT</h4>
+            <h4 style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 4px;">STRUCTURED EVIDENCE & INPUT SNAPSHOT</h4>
             <pre id="modal-json"></pre>
+        </div>
+    </div>
+</div>
+
+<!-- Confirm Modal -->
+<div class="modal-backdrop" id="confirm-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title">Confirm Recommendation</h3>
+            <button class="close-btn" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="form-group">
+            <label for="confirm-reviewer-id">Reviewer Identifier / User ID</label>
+            <input type="text" id="confirm-reviewer-id" placeholder="e.g. usr-compliance-admin" value="usr-compliance-admin">
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+            <button class="btn-sm btn-rollback" onclick="closeModal()">Cancel</button>
+            <button class="btn-sm btn-confirm" onclick="submitConfirm()">Approve & Confirm</button>
+        </div>
+    </div>
+</div>
+
+<!-- Override Modal -->
+<div class="modal-backdrop" id="override-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title">Override Recommendation</h3>
+            <button class="close-btn" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="form-group">
+            <label for="override-reviewer-id">Reviewer Identifier / User ID</label>
+            <input type="text" id="override-reviewer-id" placeholder="e.g. usr-compliance-admin" value="usr-compliance-admin">
+        </div>
+        <div class="form-group">
+            <label for="override-reason-select">Override Reason Taxonomy</label>
+            <select id="override-reason-select">
+                <option value="PENDING_CLINICAL_TRIAL">PENDING_CLINICAL_TRIAL (Active study requiring data preservation)</option>
+                <option value="LITIGATION_HOLD_EXTENDED">LITIGATION_HOLD_EXTENDED (Pending legal inquiry)</option>
+                <option value="CUSTOM_SLA">CUSTOM_SLA (Custom contract service level agreement)</option>
+                <option value="DATA_QUALITY_CONCERN">DATA_QUALITY_CONCERN (Object metadata verification pending)</option>
+                <option value="OTHER">OTHER (Requires free-text explanation below)</option>
+            </select>
+        </div>
+        <div class="form-group" id="other-reason-group" style="display: none;">
+            <label for="other-reason-text">Free-Text Explanation (Required for OTHER)</label>
+            <textarea id="other-reason-text" rows="3" placeholder="Explain rationale for choosing OTHER..."></textarea>
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+            <button class="btn-sm btn-rollback" onclick="closeModal()">Cancel</button>
+            <button class="btn-sm btn-override" onclick="submitOverride()">Submit Override</button>
+        </div>
+    </div>
+</div>
+
+<!-- Rollback Modal -->
+<div class="modal-backdrop" id="rollback-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title">Governance Rollback Recommendation</h3>
+            <button class="close-btn" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="form-group">
+            <label for="rollback-reviewer-id">Reviewer Identifier / User ID</label>
+            <input type="text" id="rollback-reviewer-id" placeholder="e.g. usr-audit-lead" value="usr-audit-lead">
+        </div>
+        <div class="form-group">
+            <label for="rollback-reason-text">Rollback Rationale & Reason</label>
+            <textarea id="rollback-reason-text" rows="3" placeholder="Explain reason for rolling back confirmed/overridden state..."></textarea>
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+            <button class="btn-sm btn-confirm" onclick="closeModal()">Cancel</button>
+            <button class="btn-sm btn-rollback" onclick="submitRollback()">Execute Governance Rollback</button>
+        </div>
+    </div>
+</div>
+
+<!-- Periodic Review Modal -->
+<div class="modal-backdrop" id="review-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title">Submit Periodic Compliance Review</h3>
+            <button class="close-btn" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="form-group">
+            <label for="review-reviewer-id">Reviewer Identifier / User ID</label>
+            <input type="text" id="review-reviewer-id" placeholder="e.g. usr-hipaa-officer" value="usr-hipaa-officer">
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+            <button class="btn-sm btn-rollback" onclick="closeModal()">Cancel</button>
+            <button class="btn-sm btn-review" onclick="submitReview()">Confirm Periodic Review</button>
         </div>
     </div>
 </div>
