@@ -51,10 +51,33 @@ def test_post_object_endpoint():
         assert response.json()["object_id"] == "obj-test-ingest-999"
 
 
-def test_stubbed_endpoints():
+def test_phase2_governance_endpoints():
     with TestClient(app) as client:
-        res_confirm = client.post("/api/v1/recommendations/obj-test-ingest-999/confirm")
-        assert res_confirm.status_code == 501
+        # Ingest test object
+        client.post("/api/v1/objects", json={
+            "id": "obj-api-gov-test",
+            "bucket_or_account": "b",
+            "cloud_provider": "AWS",
+            "data_classification": "BACKUP",
+            "current_storage_class": "HOT",
+            "size_bytes": 1000,
+            "object_age_days": 10,
+            "legal_hold": False
+        })
+        client.get("/api/v1/recommendations")
 
-        res_override = client.post("/api/v1/recommendations/obj-test-ingest-999/override")
-        assert res_override.status_code == 501
+        # Confirm recommendation endpoint (Phase 2 real implementation)
+        res_confirm = client.post(
+            "/api/v1/recommendations/obj-api-gov-test/confirm",
+            json={"reviewer_id": "usr-test"}
+        )
+        assert res_confirm.status_code == 200
+        assert res_confirm.json()["approval_status"] == "confirmed"
+
+        # Override recommendation endpoint (Phase 2 real implementation)
+        res_override = client.post(
+            "/api/v1/recommendations/obj-api-gov-test/override",
+            json={"reviewer_id": "usr-test", "override_reason": "CUSTOM_SLA"}
+        )
+        assert res_override.status_code == 200
+        assert res_override.json()["approval_status"] == "overridden"
