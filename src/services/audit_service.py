@@ -1,6 +1,6 @@
 import json
 import hashlib
-import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session
 from src.db.db_models import AuditLogDB
@@ -48,7 +48,7 @@ def write_audit_entry(
     )
 
     audit_entry = AuditLogDB(
-        timestamp=datetime.datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         event_type=event_type,
         actor=actor,
         object_id=object_id,
@@ -76,7 +76,6 @@ def verify_audit_chain(db: Session) -> Tuple[bool, Optional[int], str]:
     expected_previous_hash = GENESIS_HASH
 
     for entry in entries:
-        # Check 1: Does entry's recorded previous_hash match expected previous hash?
         if entry.previous_hash != expected_previous_hash:
             return (
                 False,
@@ -84,7 +83,6 @@ def verify_audit_chain(db: Session) -> Tuple[bool, Optional[int], str]:
                 f"Tampering detected at Audit Entry #{entry.id}: previous_hash mismatch. Expected {expected_previous_hash}, got {entry.previous_hash}."
             )
 
-        # Check 2: Recompute entry's own SHA-256 hash signature
         recomputed_hash = compute_entry_hash(
             event_type=entry.event_type,
             actor=entry.actor,
@@ -101,7 +99,6 @@ def verify_audit_chain(db: Session) -> Tuple[bool, Optional[int], str]:
                 f"Tampering detected at Audit Entry #{entry.id}: entry_hash payload content altered. Recorded {entry.entry_hash}, recomputed {recomputed_hash}."
             )
 
-        # Chain advances to current entry's hash
         expected_previous_hash = entry.entry_hash
 
     return True, None, f"Audit chain integrity verified. All {len(entries)} entries are untampered and cryptographically valid."

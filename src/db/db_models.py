@@ -1,6 +1,10 @@
-import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, BigInteger, Boolean, Text, DateTime, ForeignKey
 from .database import Base
+
+
+def utc_now():
+    return datetime.now(timezone.utc)
 
 
 class StorageObjectDB(Base):
@@ -51,7 +55,7 @@ class RecommendationDB(Base):
     requires_periodic_review = Column(Boolean, default=False, nullable=False)
     last_reviewed_at = Column(DateTime, nullable=True)
     reasoning_summary = Column(Text, nullable=False)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    timestamp = Column(DateTime, default=utc_now, nullable=False)
 
 
 class ConfirmationOverrideDB(Base):
@@ -64,14 +68,14 @@ class ConfirmationOverrideDB(Base):
     reviewer_id = Column(String, nullable=False)
     override_reason_taxonomy = Column(String, nullable=True)
     other_reason_text = Column(Text, nullable=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    timestamp = Column(DateTime, default=utc_now, nullable=False)
 
 
 class AuditLogDB(Base):
     __tablename__ = "audit_log"
 
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    timestamp = Column(DateTime, default=utc_now, nullable=False)
     event_type = Column(String, nullable=False)  # INGEST_OBJECT, GENERATE_RECOMMENDATION, CONFIRM_RECOMMENDATION, etc.
     actor = Column(String, nullable=False)
     object_id = Column(String, nullable=True)

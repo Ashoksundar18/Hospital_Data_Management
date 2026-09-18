@@ -303,7 +303,7 @@ def get_recommendations(
                 approval_status=rec.approval_status.value,
                 requires_periodic_review=rec.requires_periodic_review,
                 reasoning_summary=rec.reasoning_summary,
-                timestamp=datetime.datetime.utcnow()
+                timestamp=datetime.datetime.now(datetime.timezone.utc)
             )
             db.add(db_rec)
             db.commit()
@@ -360,12 +360,12 @@ def confirm_recommendation(
 
     # Record confirmation governance row
     conf_record = ConfirmationOverrideDB(
-        id=f"conf-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
+        id=f"conf-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
         recommendation_id=rec_db.id,
         object_id=rec_db.object_id,
         action_type="CONFIRM",
         reviewer_id=body.reviewer_id,
-        timestamp=datetime.datetime.utcnow()
+        timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
     db.add(conf_record)
     db.commit()
@@ -414,14 +414,14 @@ def override_recommendation(
     db.commit()
 
     override_record = ConfirmationOverrideDB(
-        id=f"ovr-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
+        id=f"ovr-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
         recommendation_id=rec_db.id,
         object_id=rec_db.object_id,
         action_type="OVERRIDE",
         reviewer_id=body.reviewer_id,
         override_reason_taxonomy=body.override_reason.value,
         other_reason_text=body.other_reason_text,
-        timestamp=datetime.datetime.utcnow()
+        timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
     db.add(override_record)
     db.commit()
@@ -467,16 +467,16 @@ def periodic_review_recommendation(
     if not rec_db:
         raise HTTPException(status_code=404, detail=f"Recommendation for ID '{rec_id_or_obj_id}' not found")
 
-    rec_db.last_reviewed_at = datetime.datetime.utcnow()
+    rec_db.last_reviewed_at = datetime.datetime.now(datetime.timezone.utc)
     db.commit()
 
     review_record = ConfirmationOverrideDB(
-        id=f"rev-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
+        id=f"rev-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
         recommendation_id=rec_db.id,
         object_id=rec_db.object_id,
         action_type="PERIODIC_REVIEW",
         reviewer_id=body.reviewer_id,
-        timestamp=datetime.datetime.utcnow()
+        timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
     db.add(review_record)
     db.commit()
@@ -525,13 +525,13 @@ def rollback_recommendation(
     db.commit()
 
     rollback_record = ConfirmationOverrideDB(
-        id=f"rlb-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
+        id=f"rlb-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
         recommendation_id=rec_db.id,
         object_id=rec_db.object_id,
         action_type="ROLLBACK",
         reviewer_id=body.reviewer_id,
         other_reason_text=body.reason,
-        timestamp=datetime.datetime.utcnow()
+        timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
     db.add(rollback_record)
     db.commit()
