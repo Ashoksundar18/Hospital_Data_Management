@@ -7,6 +7,11 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
 # Environments
 .venv/
 venv/
@@ -24,6 +29,6 @@ env/
 Thumbs.db
 desktop.ini
 
-# Antigravity system logs / artifacts (if any)
+# Antigravity system logs / artifacts
 .system_generated/
 scratch/
