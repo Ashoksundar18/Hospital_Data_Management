@@ -792,6 +792,48 @@ def test_render_missing_api_key_raises_runtime_error(monkeypatch):
         verify_api_key_config()
 
 
+def test_reviewer_id_spoofing_prevented(monkeypatch):
+    """
+    FIX 2: A reviewer key sending a spoofed reviewer_id in the request body is ignored,
+    and governance + audit log entries strictly record the authenticated user identity (usr-reviewer-key).
+    """
+    monkeypatch.setenv("API_KEY", "key-admin-123")
+    monkeypatch.setenv("API_KEY_REVIEWER", "key-reviewer-456")
+
+    headers_reviewer = {"X-API-Key": "key-reviewer-456"}
+    headers_admin = {"X-API-Key": "key-admin-123"}
+
+    obj_id = "obj-spoof-unique-01"
+
+    with TestClient(app) as client:
+        # Ingest test object
+        client.post("/api/v1/objects", json={
+            "id": obj_id,
+            "bucket_or_account": "b-spoof",
+            "cloud_provider": "AWS",
+            "data_classification": "BACKUP",
+            "current_storage_class": "HOT",
+            "size_bytes": 1000,
+            "object_age_days": 100,
+            "legal_hold": False
+        }, headers=headers_admin)
+        client.get("/api/v1/recommendations", headers=headers_reviewer)
+
+        # Sending spoofed reviewer_id in confirm request body -> Body reviewer_id is ignored
+        res_spoof_conf = client.post(f"/api/v1/recommendations/{obj_id}/confirm", json={
+            "reviewer_id": "spoofed-user-99"
+        }, headers=headers_reviewer)
+        assert res_spoof_conf.status_code == 200
+
+        # Assert audit log records authenticated identity "usr-reviewer-key" (NOT "spoofed-user-99")
+        audit_res = client.get(f"/api/v1/audit-log?object_id={obj_id}", headers=headers_reviewer).json()
+        confirm_audit = next(a for a in audit_res if a["event_type"] == "CONFIRM_RECOMMENDATION")
+        assert confirm_audit["actor"] == "usr-reviewer-key"
+        assert confirm_audit["details"]["reviewer_id"] == "usr-reviewer-key"
+
+
+
+
 
 
 

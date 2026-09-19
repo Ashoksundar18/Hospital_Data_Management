@@ -10,11 +10,11 @@ class UserContext(BaseModel):
     role: str  # "viewer", "reviewer", "admin"
 
 
-# Default developer keys for local development and testing
+# Default developer keys for local development and testing with distinct user_ids
 DEFAULT_KEYS: Dict[str, UserContext] = {
-    "dev-admin-key": UserContext(user_id="usr-admin", role="admin"),
-    "dev-reviewer-key": UserContext(user_id="usr-reviewer", role="reviewer"),
-    "dev-viewer-key": UserContext(user_id="usr-viewer", role="viewer"),
+    "dev-admin-key": UserContext(user_id="usr-admin-key", role="admin"),
+    "dev-reviewer-key": UserContext(user_id="usr-reviewer-key", role="reviewer"),
+    "dev-viewer-key": UserContext(user_id="usr-viewer-key", role="viewer"),
 }
 
 
@@ -55,11 +55,11 @@ def get_current_user(x_api_key: Optional[str] = Header(None)) -> UserContext:
             )
         
         if env_admin_key and secrets.compare_digest(x_api_key, env_admin_key):
-            return UserContext(user_id="usr-admin", role="admin")
+            return UserContext(user_id="usr-admin-key", role="admin")
         if env_reviewer_key and secrets.compare_digest(x_api_key, env_reviewer_key):
-            return UserContext(user_id="usr-reviewer", role="reviewer")
+            return UserContext(user_id="usr-reviewer-key", role="reviewer")
         if env_viewer_key and secrets.compare_digest(x_api_key, env_viewer_key):
-            return UserContext(user_id="usr-viewer", role="viewer")
+            return UserContext(user_id="usr-viewer-key", role="viewer")
 
         # Do NOT accept DEFAULT_KEYS when environment API keys are configured!
         raise HTTPException(
@@ -82,14 +82,14 @@ def get_current_user(x_api_key: Optional[str] = Header(None)) -> UserContext:
             if secrets.compare_digest(x_api_key, k):
                 return ctx
         if "viewer" in x_api_key.lower():
-            return UserContext(user_id="usr-viewer", role="viewer")
+            return UserContext(user_id="usr-viewer-key", role="viewer")
         elif "reviewer" in x_api_key.lower():
-            return UserContext(user_id="usr-reviewer", role="reviewer")
+            return UserContext(user_id="usr-reviewer-key", role="reviewer")
         else:
             return UserContext(user_id=f"usr-{x_api_key[:12]}", role="admin")
 
     # Default unauthenticated fallback when ALLOW_DEV_KEYS=1 is enabled
-    return UserContext(user_id="usr-reviewer", role="admin")
+    return UserContext(user_id="usr-dev-default", role="admin")
 
 
 def require_role(min_role: str):

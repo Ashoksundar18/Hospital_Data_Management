@@ -443,7 +443,7 @@ def confirm_recommendation(
 
     rec_db.approval_status = ApprovalStatus.CONFIRMED.value
 
-    reviewer_id = user.user_id if user.user_id != "usr-reviewer" else (body.reviewer_id or "usr-reviewer")
+    reviewer_id = user.user_id
 
     # Record confirmation governance row
     conf_record = ConfirmationOverrideDB(
@@ -518,7 +518,7 @@ def override_recommendation(
 
     rec_db.approval_status = ApprovalStatus.OVERRIDDEN.value
 
-    reviewer_id = user.user_id if user.user_id != "usr-reviewer" else (body.reviewer_id or "usr-reviewer")
+    reviewer_id = user.user_id
     other_text = body.other_reason_text or body.justification
 
     override_record = ConfirmationOverrideDB(
@@ -578,7 +578,7 @@ def periodic_review_recommendation(
 
     rec_db.last_reviewed_at = datetime.datetime.now(datetime.timezone.utc)
 
-    reviewer_id = user.user_id if user.user_id != "usr-reviewer" else (body.reviewer_id or "usr-reviewer")
+    reviewer_id = user.user_id
 
     review_record = ConfirmationOverrideDB(
         id=f"rev-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
@@ -642,7 +642,7 @@ def rollback_recommendation(
     previous_status = rec_db.approval_status
     rec_db.approval_status = ApprovalStatus.ROLLED_BACK.value
 
-    reviewer_id = user.user_id if user.user_id != "usr-reviewer" else (body.reviewer_id or "usr-reviewer")
+    reviewer_id = user.user_id
 
     rollback_record = ConfirmationOverrideDB(
         id=f"rlb-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
