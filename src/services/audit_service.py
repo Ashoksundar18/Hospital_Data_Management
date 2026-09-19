@@ -43,6 +43,7 @@ def write_audit_entry(
     Appends an immutable, cryptographic hash-chained audit log entry to the database.
     Acquires a PostgreSQL transaction-level advisory lock on Postgres backends to prevent chain forks.
     """
+    # Required Lock Ordering: (1) Row lock via get_recommendation_with_lock() first, (2) Advisory lock pg_advisory_xact_lock second. Both locks are held until transaction commit.
     # Acquire transaction-level advisory lock on PostgreSQL to prevent concurrent append race conditions
     if db.bind and db.bind.dialect.name == "postgresql":
         db.execute(text(f"SELECT pg_advisory_xact_lock({AUDIT_ADVISORY_LOCK_ID})"))
