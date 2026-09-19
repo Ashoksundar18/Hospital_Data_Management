@@ -758,6 +758,41 @@ def test_auth_rbac_permissions(monkeypatch):
         assert res_admin_rlb.json()["approval_status"] == "rolled_back"
 
 
+def test_dev_keys_disabled_when_env_keys_set(monkeypatch):
+    """
+    FIX 1: DEFAULT_KEYS (dev-admin-key, etc.) must NEVER be accepted when any environment API key is set.
+    """
+    monkeypatch.setenv("API_KEY", "real-prod-admin-key")
+    monkeypatch.delenv("API_KEY_REVIEWER", raising=False)
+    monkeypatch.delenv("API_KEY_VIEWER", raising=False)
+    monkeypatch.delenv("ALLOW_DEV_KEYS", raising=False)
+
+    with TestClient(app) as client:
+        # Attempting to use developer fallback key must return 401 Unauthorized
+        res_dev_key = client.get("/api/v1/recommendations", headers={"X-API-Key": "dev-admin-key"})
+        assert res_dev_key.status_code == 401
+
+        # Using real production key succeeds
+        res_prod_key = client.get("/api/v1/recommendations", headers={"X-API-Key": "real-prod-admin-key"})
+        assert res_prod_key.status_code == 200
+
+
+def test_render_missing_api_key_raises_runtime_error(monkeypatch):
+    """
+    FIX 1: On Render (RENDER=true), if no API key env vars are set, initializing/verifying auth config raises RuntimeError.
+    """
+    monkeypatch.setenv("RENDER", "true")
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.delenv("API_KEY_REVIEWER", raising=False)
+    monkeypatch.delenv("API_KEY_VIEWER", raising=False)
+    monkeypatch.delenv("ALLOW_DEV_KEYS", raising=False)
+
+    from src.api.auth import verify_api_key_config
+    with pytest.raises(RuntimeError, match="API key configuration .* is strictly required when running on Render"):
+        verify_api_key_config()
+
+
+
 
 
 
