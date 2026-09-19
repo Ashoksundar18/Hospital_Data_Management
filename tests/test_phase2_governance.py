@@ -893,6 +893,67 @@ def test_legal_hold_denial_writes_audit_entry(monkeypatch):
             db_verify.close()
 
 
+def test_postgres_concurrent_rollbacks(monkeypatch):
+    """
+    FIX 5: Verifies that concurrent rollback attempts on the same confirmed recommendation
+    against PostgreSQL result in exactly 1 successful rollback (HTTP 200) and 1 rejection (HTTP 409 Conflict),
+    maintaining a valid audit hash chain. Skips on SQLite backends.
+    """
+    from src.db import engine
+    if engine.dialect.name != "postgresql":
+        pytest.skip("PostgreSQL required for concurrent rollback test")
+
+    import concurrent.futures
+    import uuid
+
+    monkeypatch.setenv("API_KEY", "key-admin-rlb")
+    headers_admin = {"X-API-Key": "key-admin-rlb"}
+    obj_id = f"obj-pg-rlb-{uuid.uuid4().hex[:6]}"
+
+    with TestClient(app) as client:
+        # Ingest object and confirm it
+        client.post("/api/v1/objects", json={
+            "id": obj_id,
+            "bucket_or_account": "b-pg-rlb",
+            "cloud_provider": "AWS",
+            "data_classification": "BACKUP",
+            "current_storage_class": "HOT",
+            "size_bytes": 1000,
+            "object_age_days": 100,
+            "legal_hold": False
+        }, headers=headers_admin)
+        client.get("/api/v1/recommendations", headers=headers_admin)
+        res_conf = client.post(f"/api/v1/recommendations/{obj_id}/confirm", json={"reviewer_id": "usr-admin-key"}, headers=headers_admin)
+        assert res_conf.status_code == 200
+
+        def rollback_worker():
+            with TestClient(app) as worker_client:
+                return worker_client.post(
+                    f"/api/v1/recommendations/{obj_id}/rollback",
+                    json={"reason": "Concurrent test rollback"},
+                    headers=headers_admin
+                )
+
+        # Execute 2 concurrent rollback requests in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            f1 = executor.submit(rollback_worker)
+            f2 = executor.submit(rollback_worker)
+            r1, r2 = f1.result(), f2.result()
+
+        status_codes = sorted([r1.status_code, r2.status_code])
+        assert status_codes == [200, 409]
+
+        # Verify audit chain integrity
+        from src.db import SessionLocal
+        db = SessionLocal()
+        try:
+            is_valid, tampered_id, msg = verify_audit_chain(db)
+            assert is_valid is True, f"Audit chain verification failed: {msg}"
+        finally:
+            db.close()
+
+
+
 
 
 
