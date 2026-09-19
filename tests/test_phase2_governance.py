@@ -832,6 +832,68 @@ def test_reviewer_id_spoofing_prevented(monkeypatch):
         assert confirm_audit["details"]["reviewer_id"] == "usr-reviewer-key"
 
 
+def test_legal_hold_denial_writes_audit_entry(monkeypatch):
+    """
+    FIX 3: Verifies attempting confirm/override on a legal hold object writes an audit entry
+    with event_type="REJECT_LEGAL_HOLD_VIOLATION" and preserves hash chain integrity.
+    """
+    import uuid
+    monkeypatch.setenv("API_KEY", "key-admin-lh")
+    monkeypatch.setenv("API_KEY_REVIEWER", "key-reviewer-lh")
+    headers_admin = {"X-API-Key": "key-admin-lh"}
+    headers_reviewer = {"X-API-Key": "key-reviewer-lh"}
+    obj_id = f"obj-lh-audit-{uuid.uuid4().hex[:6]}"
+
+    with TestClient(app) as client:
+        # Ingest object
+        client.post("/api/v1/objects", json={
+            "id": obj_id,
+            "bucket_or_account": "b-lh-audit",
+            "cloud_provider": "AWS",
+            "data_classification": "BACKUP",
+            "current_storage_class": "HOT",
+            "size_bytes": 1000,
+            "object_age_days": 120,
+            "legal_hold": False
+        }, headers=headers_admin)
+        client.get("/api/v1/recommendations", headers=headers_reviewer)
+
+        # Set legal_hold = True
+        from src.db import SessionLocal, StorageObjectDB
+        db = SessionLocal()
+        try:
+            obj_db = db.query(StorageObjectDB).filter(StorageObjectDB.id == obj_id).first()
+            obj_db.legal_hold = True
+            db.commit()
+        finally:
+            db.close()
+
+        # Attempt to confirm -> returns HTTP 400
+        res_conf = client.post(f"/api/v1/recommendations/{obj_id}/confirm", json={"reviewer_id": "usr-reviewer-key"}, headers=headers_reviewer)
+        assert res_conf.status_code == 400
+
+        # Attempt to override -> returns HTTP 400
+        res_ovr = client.post(f"/api/v1/recommendations/{obj_id}/override", json={"reviewer_id": "usr-reviewer-key", "override_reason": "PENDING_CLINICAL_TRIAL"}, headers=headers_reviewer)
+        assert res_ovr.status_code == 400
+
+        # Check audit log for REJECT_LEGAL_HOLD_VIOLATION entries
+        audit_res = client.get(f"/api/v1/audit-log?object_id={obj_id}", headers=headers_reviewer).json()
+        reject_entries = [a for a in audit_res if a["event_type"] == "REJECT_LEGAL_HOLD_VIOLATION"]
+        assert len(reject_entries) == 2
+        for entry in reject_entries:
+            assert entry["actor"] == "usr-reviewer-key"
+            assert entry["object_id"] == obj_id
+
+        # Verify audit chain integrity
+        db_verify = SessionLocal()
+        try:
+            is_valid, tampered_id, msg = verify_audit_chain(db_verify)
+            assert is_valid is True, f"Audit chain verification failed: {msg}"
+        finally:
+            db_verify.close()
+
+
+
 
 
 

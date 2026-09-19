@@ -1,6 +1,7 @@
 import json
 import os
 import datetime
+import logging
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, status, Depends
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 from src.logging_config import configure_logging
 
 configure_logging()
+logger = logging.getLogger(__name__)
 
 
 from src.db import (
@@ -416,6 +418,22 @@ def confirm_recommendation(
     obj_db = db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first()
     if obj_db and obj_db.legal_hold:
         if rec_db.recommended_action in [RecommendedAction.TRANSITION.value, RecommendedAction.DELETE.value] or rec_db.target_storage_class:
+            logger.warning(
+                f"Legal hold rejection: attempted confirm on object '{rec_db.object_id}' under legal hold by actor '{user.user_id}'"
+            )
+            write_audit_entry(
+                db,
+                event_type="REJECT_LEGAL_HOLD_VIOLATION",
+                actor=user.user_id,
+                object_id=rec_db.object_id,
+                recommendation_id=rec_db.id,
+                details={
+                    "attempted_action": "CONFIRM",
+                    "reason": "Cannot confirm transition or deletion action on an object under legal hold",
+                    "recommended_action": rec_db.recommended_action
+                },
+                auto_commit=True
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot confirm transition or deletion action on an object under legal hold."
@@ -502,6 +520,22 @@ def override_recommendation(
     obj_db = db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first()
     if obj_db and obj_db.legal_hold:
         if rec_db.recommended_action in [RecommendedAction.TRANSITION.value, RecommendedAction.DELETE.value] or rec_db.target_storage_class:
+            logger.warning(
+                f"Legal hold rejection: attempted override on object '{rec_db.object_id}' under legal hold by actor '{user.user_id}'"
+            )
+            write_audit_entry(
+                db,
+                event_type="REJECT_LEGAL_HOLD_VIOLATION",
+                actor=user.user_id,
+                object_id=rec_db.object_id,
+                recommendation_id=rec_db.id,
+                details={
+                    "attempted_action": "OVERRIDE",
+                    "reason": "Cannot override transition or deletion action on an object under legal hold",
+                    "recommended_action": rec_db.recommended_action
+                },
+                auto_commit=True
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot override transition or deletion action on an object under legal hold."
