@@ -1,7 +1,7 @@
 import os
 import logging
 from typing import Mapping, Optional
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 from src.logging_config import configure_logging
@@ -85,9 +85,33 @@ def get_db():
         db.close()
 
 
-def init_db():
-    """Initializes database tables."""
-    Base.metadata.create_all(bind=engine)
+def ensure_indexes(target_engine=None):
+    """
+    Idempotently ensures key indexes exist on the database tables.
+    Executes CREATE INDEX IF NOT EXISTS for PostgreSQL and SQLite.
+    """
+    eng = target_engine or engine
+    indexes_to_create = [
+        ("ix_audit_log_object_id", "audit_log", "object_id"),
+        ("ix_recommendations_approval_status", "recommendations", "approval_status"),
+        ("ix_confirmations_and_overrides_object_id", "confirmations_and_overrides", "object_id"),
+    ]
+    with eng.connect() as conn:
+        for idx_name, table_name, col_name in indexes_to_create:
+            try:
+                conn.execute(
+                    text(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table_name} ({col_name})")
+                )
+            except Exception as e:
+                logger.warning(f"Could not create index {idx_name} on {table_name}: {e}")
+        conn.commit()
+
+
+def init_db(target_engine=None):
+    """Initializes database tables and ensures indexes are present."""
+    eng = target_engine or engine
+    Base.metadata.create_all(bind=eng)
+    ensure_indexes(eng)
 
 
 def get_db_backend_info():

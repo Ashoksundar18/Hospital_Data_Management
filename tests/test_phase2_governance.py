@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.api.main import app
-from src.db import Base, get_db, StorageObjectDB, RetentionRuleDB, RecommendationDB, AuditLogDB, init_db
+from src.db import Base, get_db, StorageObjectDB, RetentionRuleDB, RecommendationDB, AuditLogDB, init_db, ensure_indexes
 from src.models import (
     StorageObject,
     CloudProvider,
@@ -655,6 +655,37 @@ def test_legal_hold_and_delete_justification_enforcement():
         })
         assert res_conf_del_ok.status_code == 200
         assert res_conf_del_ok.json()["approval_status"] == "confirmed"
+
+
+def test_idempotent_ensure_indexes_and_reinit(tmp_path):
+    """
+    Verifies that init_db() and ensure_indexes() run idempotently on existing tables
+    without raising errors on repeated initialization.
+    """
+    test_db_file = os.path.join(tmp_path, "test_indexes.db")
+    test_engine = create_engine(f"sqlite:///{test_db_file}")
+
+    # First initialization creates tables and indexes
+    init_db(target_engine=test_engine)
+
+    # Secondary initialization on existing database must succeed without errors
+    init_db(target_engine=test_engine)
+    ensure_indexes(target_engine=test_engine)
+
+    # Inspect index names on created tables
+    from sqlalchemy import inspect
+    inspector = inspect(test_engine)
+
+    audit_indexes = [idx["name"] for idx in inspector.get_indexes("audit_log")]
+    rec_indexes = [idx["name"] for idx in inspector.get_indexes("recommendations")]
+    conf_indexes = [idx["name"] for idx in inspector.get_indexes("confirmations_and_overrides")]
+
+    assert "ix_audit_log_object_id" in audit_indexes
+    assert "ix_recommendations_approval_status" in rec_indexes
+    assert "ix_confirmations_and_overrides_object_id" in conf_indexes
+
+    test_engine.dispose()
+
 
 
 

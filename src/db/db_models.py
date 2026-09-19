@@ -51,7 +51,7 @@ class RecommendationDB(Base):
     confidence_tier = Column(String, nullable=False)
     impact_tier = Column(String, nullable=False)
     data_completeness_flag = Column(String, nullable=False)
-    approval_status = Column(String, default="pending", nullable=False)  # pending, confirmed, overridden, rolled_back
+    approval_status = Column(String, default="pending", nullable=False, index=True)  # pending, confirmed, overridden, rolled_back
     requires_periodic_review = Column(Boolean, default=False, nullable=False)
     last_reviewed_at = Column(DateTime, nullable=True)
     reasoning_summary = Column(Text, nullable=False)
@@ -63,7 +63,7 @@ class ConfirmationOverrideDB(Base):
 
     id = Column(String, primary_key=True, index=True)
     recommendation_id = Column(String, ForeignKey("recommendations.id"), index=True, nullable=False)
-    object_id = Column(String, nullable=False)
+    object_id = Column(String, nullable=False, index=True)
     action_type = Column(String, nullable=False)  # CONFIRM, OVERRIDE, PERIODIC_REVIEW, ROLLBACK
     reviewer_id = Column(String, nullable=False)
     override_reason_taxonomy = Column(String, nullable=True)
@@ -78,7 +78,7 @@ class AuditLogDB(Base):
     timestamp = Column(DateTime, default=utc_now, nullable=False)
     event_type = Column(String, nullable=False)  # INGEST_OBJECT, GENERATE_RECOMMENDATION, CONFIRM_RECOMMENDATION, etc.
     actor = Column(String, nullable=False)
-    object_id = Column(String, nullable=True)
+    object_id = Column(String, nullable=True, index=True)
     recommendation_id = Column(String, nullable=True)
     details_json = Column(Text, nullable=False)
     previous_hash = Column(String, nullable=False)
