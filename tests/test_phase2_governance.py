@@ -687,6 +687,78 @@ def test_idempotent_ensure_indexes_and_reinit(tmp_path):
     test_engine.dispose()
 
 
+def test_auth_rbac_permissions(monkeypatch):
+    """
+    Verifies X-API-Key authentication and role-based access control (RBAC):
+    - 401 Unauthorized when API_KEY is set and no or invalid X-API-Key is provided.
+    - Viewer role can read GET endpoints, but POST operations return 403 Forbidden.
+    - Reviewer role can confirm/override recommendations, but ingest/rollback return 403.
+    - Admin role can execute all operations.
+    """
+    monkeypatch.setenv("API_KEY", "key-admin-123")
+    monkeypatch.setenv("API_KEY_REVIEWER", "key-reviewer-456")
+    monkeypatch.setenv("API_KEY_VIEWER", "key-viewer-789")
+
+    with TestClient(app) as client:
+        # 1. Unauthenticated request -> 401 Unauthorized
+        res_no_auth = client.get("/api/v1/recommendations")
+        assert res_no_auth.status_code == 401
+
+        res_bad_auth = client.get("/api/v1/recommendations", headers={"X-API-Key": "wrong-key"})
+        assert res_bad_auth.status_code == 401
+
+        # 2. Viewer role
+        headers_viewer = {"X-API-Key": "key-viewer-789"}
+        res_view = client.get("/api/v1/recommendations", headers=headers_viewer)
+        assert res_view.status_code == 200
+
+        res_view_ingest = client.post("/api/v1/objects", json={
+            "id": "obj-auth-01",
+            "bucket_or_account": "b-auth",
+            "cloud_provider": "AWS",
+            "data_classification": "BACKUP",
+            "current_storage_class": "HOT",
+            "size_bytes": 1000,
+            "object_age_days": 100,
+            "legal_hold": False
+        }, headers=headers_viewer)
+        assert res_view_ingest.status_code == 403
+
+        # 3. Reviewer role
+        headers_reviewer = {"X-API-Key": "key-reviewer-456"}
+        headers_admin = {"X-API-Key": "key-admin-123"}
+
+        # Admin ingests object
+        res_admin_ingest = client.post("/api/v1/objects", json={
+            "id": "obj-auth-01",
+            "bucket_or_account": "b-auth",
+            "cloud_provider": "AWS",
+            "data_classification": "BACKUP",
+            "current_storage_class": "HOT",
+            "size_bytes": 1000,
+            "object_age_days": 100,
+            "legal_hold": False
+        }, headers=headers_admin)
+        assert res_admin_ingest.status_code == 201
+
+        # Sync recs
+        client.get("/api/v1/recommendations", headers=headers_reviewer)
+
+        # Reviewer can confirm
+        res_rev_conf = client.post("/api/v1/recommendations/obj-auth-01/confirm", json={"reviewer_id": "usr-reviewer"}, headers=headers_reviewer)
+        assert res_rev_conf.status_code == 200
+
+        # Reviewer CANNOT rollback -> 403 Forbidden
+        res_rev_rlb = client.post("/api/v1/recommendations/obj-auth-01/rollback", json={"reviewer_id": "usr-reviewer", "reason": "test"}, headers=headers_reviewer)
+        assert res_rev_rlb.status_code == 403
+
+        # Admin CAN rollback -> 200 OK
+        res_admin_rlb = client.post("/api/v1/recommendations/obj-auth-01/rollback", json={"reviewer_id": "usr-admin", "reason": "test"}, headers=headers_admin)
+        assert res_admin_rlb.status_code == 200
+        assert res_admin_rlb.json()["approval_status"] == "rolled_back"
+
+
+
 
 
 

@@ -2,6 +2,28 @@ let allRecommendations = [];
 let allAuditLogs = [];
 let currentSelectedRecId = null;
 
+function getApiKey() {
+    return sessionStorage.getItem('X-API-Key') || '';
+}
+
+async function apiFetch(url, options = {}) {
+    options.headers = options.headers || {};
+    const key = getApiKey();
+    if (key) {
+        options.headers['X-API-Key'] = key;
+    }
+    const response = await fetch(url, options);
+    if (response.status === 401) {
+        const userKey = prompt('X-API-Key authentication required. Please enter API Key:');
+        if (userKey) {
+            sessionStorage.setItem('X-API-Key', userKey);
+            options.headers['X-API-Key'] = userKey;
+            return fetch(url, options);
+        }
+    }
+    return response;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     fetchDbInfo();
     fetchRecommendations();
@@ -19,7 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function fetchDbInfo() {
     try {
-        const response = await fetch('/api/v1/db-info');
+        const response = await apiFetch('/api/v1/db-info');
         if (response.ok) {
             const data = await response.json();
             const labelEl = document.getElementById('db-backend-label');
@@ -50,7 +72,7 @@ function switchTab(tabName) {
 
 async function fetchRecommendations() {
     try {
-        const response = await fetch('/api/v1/recommendations');
+        const response = await apiFetch('/api/v1/recommendations');
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         allRecommendations = await response.json();
         updateMetrics(allRecommendations);
@@ -192,7 +214,7 @@ async function submitConfirm() {
     }
 
     try {
-        const response = await fetch(`/api/v1/recommendations/${currentSelectedRecId}/confirm`, {
+        const response = await apiFetch(`/api/v1/recommendations/${currentSelectedRecId}/confirm`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ reviewer_id: reviewerId })
@@ -235,7 +257,7 @@ async function submitOverride() {
     }
 
     try {
-        const response = await fetch(`/api/v1/recommendations/${currentSelectedRecId}/override`, {
+        const response = await apiFetch(`/api/v1/recommendations/${currentSelectedRecId}/override`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -274,7 +296,7 @@ async function submitRollback() {
     }
 
     try {
-        const response = await fetch(`/api/v1/recommendations/${currentSelectedRecId}/rollback`, {
+        const response = await apiFetch(`/api/v1/recommendations/${currentSelectedRecId}/rollback`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ reviewer_id: reviewerId, reason: reason })
@@ -306,7 +328,7 @@ async function submitReview() {
     }
 
     try {
-        const response = await fetch(`/api/v1/recommendations/${currentSelectedRecId}/periodic-review`, {
+        const response = await apiFetch(`/api/v1/recommendations/${currentSelectedRecId}/periodic-review`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ reviewer_id: reviewerId })
@@ -332,7 +354,7 @@ function closeModal() {
 
 async function fetchAuditLogs() {
     try {
-        const response = await fetch('/api/v1/audit-log');
+        const response = await apiFetch('/api/v1/audit-log');
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         allAuditLogs = await response.json();
         renderAuditTable(allAuditLogs);
@@ -393,7 +415,7 @@ async function verifyAuditChain() {
     statusDiv.textContent = 'Verifying SHA-256 cryptographic hash chain integrity across all entries...';
 
     try {
-        const response = await fetch('/api/v1/audit-log/verify');
+        const response = await apiFetch('/api/v1/audit-log/verify');
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const result = await response.json();
 

@@ -42,6 +42,7 @@ from src.models import (
 )
 from src.engine import LifecycleRulesEngine
 from src.services import write_audit_entry, verify_audit_chain
+from src.api.auth import UserContext, get_current_user, require_role
 
 
 def preload_initial_data(db: Session):
@@ -128,7 +129,7 @@ if os.path.exists("ui"):
 
 
 @app.get("/api/v1/db-info")
-def get_db_info():
+def get_db_info(user: UserContext = Depends(require_role("viewer"))):
     """Returns active database backend dialect and engine metadata."""
     return get_db_backend_info()
 
@@ -179,9 +180,13 @@ def db_rule_to_pydantic(db_rule: RetentionRuleDB) -> RetentionRule:
 # --- API ENDPOINTS ---
 
 @app.post("/api/v1/objects", status_code=status.HTTP_201_CREATED)
-def ingest_object(obj: StorageObject, db: Session = Depends(get_db)):
+def ingest_object(
+    obj: StorageObject,
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(require_role("admin"))
+):
     """
-    Ingests or updates a storage object's metadata in the SQLite database and appends an audit log entry.
+    Ingests or updates a storage object's metadata in the database and appends an audit log entry.
     """
     db_obj = db.query(StorageObjectDB).filter(StorageObjectDB.id == obj.id).first()
     restore_json = json.dumps([e.model_dump() for e in obj.restore_event_history]) if obj.restore_event_history is not None else None
@@ -222,7 +227,7 @@ def ingest_object(obj: StorageObject, db: Session = Depends(get_db)):
     write_audit_entry(
         db,
         event_type="INGEST_OBJECT",
-        actor="API_CLIENT",
+        actor=user.user_id,
         object_id=obj.id,
         details={
             "action": action_verb,
@@ -244,7 +249,8 @@ def ingest_object(obj: StorageObject, db: Session = Depends(get_db)):
 def list_objects(
     classification: Optional[DataClassification] = None,
     legal_hold: Optional[bool] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(require_role("viewer"))
 ):
     """
     Retrieves list of ingested storage objects from SQLite database.
@@ -265,7 +271,8 @@ def get_recommendations(
     action: Optional[RecommendedAction] = None,
     approval_status: Optional[ApprovalStatus] = None,
     missing_data_only: bool = False,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(require_role("viewer"))
 ):
     """
     Runs the rules engine on persisted storage objects, saves/syncs recommendations in DB, and returns structured outputs.
@@ -393,7 +400,8 @@ def get_recommendation_with_lock(db: Session, rec_id_or_obj_id: str) -> Optional
 def confirm_recommendation(
     rec_id_or_obj_id: str,
     body: ConfirmRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(require_role("reviewer"))
 ):
     """
     Phase 2: Confirms a recommendation. Updates approval_status to 'confirmed' and writes audit log.
@@ -435,7 +443,7 @@ def confirm_recommendation(
 
     rec_db.approval_status = ApprovalStatus.CONFIRMED.value
 
-    reviewer_id = body.reviewer_id or "usr-reviewer"
+    reviewer_id = user.user_id if user.user_id != "usr-reviewer" else (body.reviewer_id or "usr-reviewer")
 
     # Record confirmation governance row
     conf_record = ConfirmationOverrideDB(
@@ -479,7 +487,8 @@ def confirm_recommendation(
 def override_recommendation(
     rec_id_or_obj_id: str,
     body: OverrideRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(require_role("reviewer"))
 ):
     """
     Phase 2: Overrides a recommendation with structured reason taxonomy. Updates approval_status to 'overridden' and writes audit log.
@@ -509,7 +518,7 @@ def override_recommendation(
 
     rec_db.approval_status = ApprovalStatus.OVERRIDDEN.value
 
-    reviewer_id = body.reviewer_id or "usr-reviewer"
+    reviewer_id = user.user_id if user.user_id != "usr-reviewer" else (body.reviewer_id or "usr-reviewer")
     other_text = body.other_reason_text or body.justification
 
     override_record = ConfirmationOverrideDB(
@@ -556,7 +565,8 @@ def override_recommendation(
 def periodic_review_recommendation(
     rec_id_or_obj_id: str,
     body: PeriodicReviewRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(require_role("reviewer"))
 ):
     """
     Phase 2: Completes compliance periodic re-confirmation for NO_ACTION items (legal hold / retention lock).
@@ -568,12 +578,14 @@ def periodic_review_recommendation(
 
     rec_db.last_reviewed_at = datetime.datetime.now(datetime.timezone.utc)
 
+    reviewer_id = user.user_id if user.user_id != "usr-reviewer" else (body.reviewer_id or "usr-reviewer")
+
     review_record = ConfirmationOverrideDB(
         id=f"rev-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
         recommendation_id=rec_db.id,
         object_id=rec_db.object_id,
         action_type="PERIODIC_REVIEW",
-        reviewer_id=body.reviewer_id,
+        reviewer_id=reviewer_id,
         timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
     db.add(review_record)
@@ -581,12 +593,12 @@ def periodic_review_recommendation(
     write_audit_entry(
         db,
         event_type="PERIODIC_REVIEW",
-        actor=body.reviewer_id,
+        actor=reviewer_id,
         object_id=rec_db.object_id,
         recommendation_id=rec_db.id,
         details={
             "action": "PERIODIC_REVIEW",
-            "reviewer_id": body.reviewer_id,
+            "reviewer_id": reviewer_id,
             "reviewed_at": rec_db.last_reviewed_at.isoformat()
         },
         auto_commit=False
@@ -608,7 +620,8 @@ def periodic_review_recommendation(
 def rollback_recommendation(
     rec_id_or_obj_id: str,
     body: RollbackRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(require_role("admin"))
 ):
     """
     Phase 2: Governance-level rollback of a confirmed or overridden recommendation back to 'rolled_back' state.
@@ -629,12 +642,14 @@ def rollback_recommendation(
     previous_status = rec_db.approval_status
     rec_db.approval_status = ApprovalStatus.ROLLED_BACK.value
 
+    reviewer_id = user.user_id if user.user_id != "usr-reviewer" else (body.reviewer_id or "usr-reviewer")
+
     rollback_record = ConfirmationOverrideDB(
         id=f"rlb-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}-{rec_db.id[:6]}",
         recommendation_id=rec_db.id,
         object_id=rec_db.object_id,
         action_type="ROLLBACK",
-        reviewer_id=body.reviewer_id,
+        reviewer_id=reviewer_id,
         other_reason_text=body.reason,
         timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
@@ -643,12 +658,12 @@ def rollback_recommendation(
     write_audit_entry(
         db,
         event_type="ROLLBACK_RECOMMENDATION",
-        actor=body.reviewer_id,
+        actor=reviewer_id,
         object_id=rec_db.object_id,
         recommendation_id=rec_db.id,
         details={
             "action": "ROLLBACK",
-            "reviewer_id": body.reviewer_id,
+            "reviewer_id": reviewer_id,
             "previous_approval_status": previous_status,
             "rollback_reason": body.reason
         },
@@ -675,7 +690,8 @@ def get_audit_log(
     event_type: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(require_role("viewer"))
 ):
     """
     Retrieves the immutable, hash-chained audit log entries with optional filters.
@@ -717,7 +733,10 @@ def get_audit_log(
 
 
 @app.get("/api/v1/audit-log/verify", response_model=AuditVerifyResponse)
-def verify_audit_log_chain(db: Session = Depends(get_db)):
+def verify_audit_log_chain(
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(require_role("viewer"))
+):
     """
     Executes a cryptographic verification check across all audit log entries in sequence.
     Detects any database-level tampering or altered hash signatures.
