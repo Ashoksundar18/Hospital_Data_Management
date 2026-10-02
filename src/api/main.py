@@ -43,6 +43,8 @@ from src.models import (
     AuditVerifyResponse,
     CostReport,
     ExecuteRequest,
+    BatchRunRequest,
+    BatchRunSummary,
 )
 from src.engine import LifecycleRulesEngine
 from src.services import (
@@ -50,6 +52,7 @@ from src.services import (
     verify_audit_chain,
     generate_cost_report_from_db,
     execute_recommendation_action,
+    run_batch_execution,
 )
 from src.api.auth import UserContext, get_current_user, require_role
 
@@ -749,6 +752,29 @@ def execute_recommendation(
         irreversible_justification=body.irreversible_justification,
         get_rec_lock_func=get_recommendation_with_lock
     )
+
+
+@app.post("/api/v1/execution/batch-run", response_model=BatchRunSummary)
+def execute_batch_recommendations(
+    body: BatchRunRequest = BatchRunRequest(),
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(require_role("admin"))
+):
+    """
+    Phase 3: Executes a batch of confirmed recommendations against cloud storage.
+    Supports dry_run preview, rechecks legal holds, safeguards irreversible actions,
+    and appends a BATCH_EXECUTION_RUN audit record.
+    """
+    return run_batch_execution(
+        db=db,
+        actor=user.user_id,
+        bucket_or_account=body.bucket_or_account,
+        dry_run=body.dry_run,
+        max_items=body.max_items,
+        confirm_irreversible=body.confirm_irreversible,
+        irreversible_justification=body.irreversible_justification
+    )
+
 
 
 # --- AUDIT TRAIL ENDPOINTS ---

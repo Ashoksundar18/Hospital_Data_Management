@@ -24,6 +24,8 @@ from .cost import (
 from .execution import (
     ExecuteRequest,
     ExecutionResult,
+    BatchRunRequest,
+    BatchRunSummary,
 )
 
 __all__ = [
@@ -51,4 +53,6 @@ __all__ = [
     "CostReport",
     "ExecuteRequest",
     "ExecutionResult",
+    "BatchRunRequest",
+    "BatchRunSummary",
 ]

@@ -14,6 +14,7 @@ from .cloud_executor import (
     S3_TIER_MAPPING
 )
 from .execution_service import execute_recommendation_action
+from .batch_runner import run_batch_execution
 
 __all__ = [
     "write_audit_entry",
@@ -30,6 +31,7 @@ __all__ = [
     "ObjectNotFoundError",
     "S3_TIER_MAPPING",
     "execute_recommendation_action",
+    "run_batch_execution",
 ]
 
 

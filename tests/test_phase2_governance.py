@@ -439,7 +439,12 @@ def test_audit_log_concurrency_and_unique_hashes():
     """
     Verifies that concurrent confirmations on different objects produce a valid,
     untampered audit chain where every previous_hash and entry_hash is unique.
+    Requires PostgreSQL pg_advisory_xact_lock to serialize concurrent appends without forks.
     """
+    from src.db import engine
+    if engine.dialect.name != "postgresql":
+        pytest.skip("PostgreSQL advisory lock required for concurrent audit append test")
+
     import concurrent.futures
 
     with TestClient(app) as client:
