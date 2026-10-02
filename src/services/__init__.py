@@ -13,6 +13,7 @@ from .cloud_executor import (
     ObjectNotFoundError,
     S3_TIER_MAPPING
 )
+from .execution_service import execute_recommendation_action
 
 __all__ = [
     "write_audit_entry",
@@ -28,6 +29,7 @@ __all__ = [
     "StorageExecutionError",
     "ObjectNotFoundError",
     "S3_TIER_MAPPING",
+    "execute_recommendation_action",
 ]
 
 

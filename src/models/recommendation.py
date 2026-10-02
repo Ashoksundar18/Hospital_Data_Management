@@ -36,6 +36,9 @@ class ApprovalStatus(str, Enum):
     CONFIRMED = "confirmed"
     OVERRIDDEN = "overridden"
     ROLLED_BACK = "rolled_back"
+    EXECUTED = "executed"
+    EXECUTION_FAILED = "execution_failed"
+    BLOCKED_BY_LEGAL_HOLD = "blocked_by_legal_hold"
 
 
 class OverrideReasonTaxonomy(str, Enum):

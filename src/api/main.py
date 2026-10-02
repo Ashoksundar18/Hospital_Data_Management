@@ -42,9 +42,15 @@ from src.models import (
     AuditEntry,
     AuditVerifyResponse,
     CostReport,
+    ExecuteRequest,
 )
 from src.engine import LifecycleRulesEngine
-from src.services import write_audit_entry, verify_audit_chain, generate_cost_report_from_db
+from src.services import (
+    write_audit_entry,
+    verify_audit_chain,
+    generate_cost_report_from_db,
+    execute_recommendation_action,
+)
 from src.api.auth import UserContext, get_current_user, require_role
 
 
@@ -307,7 +313,13 @@ def get_recommendations(
         existing_rec = existing_recs_map.get(rec.object_id)
 
         # Determine canonical governance status from ConfirmationOverrideDB & RecommendationDB
-        if latest_gov:
+        if existing_rec and existing_rec.approval_status in [
+            ApprovalStatus.EXECUTED.value,
+            ApprovalStatus.EXECUTION_FAILED.value,
+            ApprovalStatus.BLOCKED_BY_LEGAL_HOLD.value,
+        ]:
+            status_str = existing_rec.approval_status
+        elif latest_gov:
             if latest_gov.action_type == "CONFIRM":
                 status_str = ApprovalStatus.CONFIRMED.value
             elif latest_gov.action_type == "OVERRIDE":
@@ -715,6 +727,28 @@ def rollback_recommendation(
     rec.requires_periodic_review = rec_db.requires_periodic_review
     rec.last_reviewed_at = rec_db.last_reviewed_at
     return rec
+
+
+@app.post("/api/v1/recommendations/{rec_id_or_obj_id}/execute", response_model=Recommendation)
+def execute_recommendation(
+    rec_id_or_obj_id: str,
+    body: ExecuteRequest = ExecuteRequest(),
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(require_role("admin"))
+):
+    """
+    Phase 3: Executes a confirmed recommendation against the target cloud storage provider.
+    Re-verifies legal hold status at execution time and enforces confirm_irreversible on DELETE/DEEP_ARCHIVE.
+    Appends an immutable hash-chained audit record (EXECUTE_TRANSITION, EXECUTE_DELETE, or EXECUTION_FAILED).
+    """
+    return execute_recommendation_action(
+        db=db,
+        rec_id_or_obj_id=rec_id_or_obj_id,
+        actor=user.user_id,
+        confirm_irreversible=body.confirm_irreversible,
+        irreversible_justification=body.irreversible_justification,
+        get_rec_lock_func=get_recommendation_with_lock
+    )
 
 
 # --- AUDIT TRAIL ENDPOINTS ---

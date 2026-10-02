@@ -21,6 +21,10 @@ from .cost import (
     CostCategorySummary,
     CostReport,
 )
+from .execution import (
+    ExecuteRequest,
+    ExecutionResult,
+)
 
 __all__ = [
     "StorageObject",
@@ -45,4 +49,6 @@ __all__ = [
     "SingleObjectCost",
     "CostCategorySummary",
     "CostReport",
+    "ExecuteRequest",
+    "ExecutionResult",
 ]
