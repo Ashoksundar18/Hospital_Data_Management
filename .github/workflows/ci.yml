@@ -53,4 +53,25 @@ jobs:
           AWS_ACCESS_KEY_ID: mock-key
           AWS_SECRET_ACCESS_KEY: mock-secret
         run: |
-          pytest -v --tb=short
+          python -m pytest -v --tb=short 2>&1 | tee pytest_output.log
+        continue-on-error: true
+
+      - name: Publish Test Summary
+        if: always()
+        run: |
+          echo "### Pytest Test Results" >> $GITHUB_STEP_SUMMARY
+          echo '```text' >> $GITHUB_STEP_SUMMARY
+          tail -n 80 pytest_output.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Assert All Tests Passed
+        run: |
+          if grep -qE "([1-9][0-9]* failed|ERRORS|CollectionError)" pytest_output.log; then
+            echo "Pytest reported test failures or collection errors."
+            exit 1
+          fi
+          if ! grep -qE "([1-9][0-9]* passed)" pytest_output.log; then
+            echo "Pytest did not report any passing tests."
+            exit 1
+          fi
+          echo "All tests passed successfully!"
