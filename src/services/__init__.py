@@ -6,6 +6,13 @@ from .cost_service import (
     S3_STORAGE_PRICING,
     BYTES_PER_GB
 )
+from .cloud_executor import (
+    BaseStorageExecutor,
+    S3StorageExecutor,
+    StorageExecutionError,
+    ObjectNotFoundError,
+    S3_TIER_MAPPING
+)
 
 __all__ = [
     "write_audit_entry",
@@ -16,5 +23,11 @@ __all__ = [
     "generate_cost_report_from_db",
     "S3_STORAGE_PRICING",
     "BYTES_PER_GB",
+    "BaseStorageExecutor",
+    "S3StorageExecutor",
+    "StorageExecutionError",
+    "ObjectNotFoundError",
+    "S3_TIER_MAPPING",
 ]
+
 
