@@ -965,7 +965,7 @@ def test_postgres_concurrent_rollbacks(monkeypatch):
             with TestClient(app) as worker_client:
                 return worker_client.post(
                     f"/api/v1/recommendations/{obj_id}/rollback",
-                    json={"reason": "Concurrent test rollback"},
+                    json={"reviewer_id": "usr-admin-key", "reason": "Concurrent test rollback"},
                     headers=headers_admin
                 )
 
