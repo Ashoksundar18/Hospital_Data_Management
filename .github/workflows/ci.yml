@@ -53,4 +53,9 @@ jobs:
           AWS_ACCESS_KEY_ID: mock-key
           AWS_SECRET_ACCESS_KEY: mock-secret
         run: |
-          python -m pytest -v
+          set -o pipefail
+          python -m pytest -v --tb=line 2>&1 | tee pytest_output.log || {
+            FAILED_LINES=$(grep -E "^(FAILED|ERROR) " pytest_output.log | tr '\r\n' '  ')
+            echo "::error title=Failed Tests::$FAILED_LINES"
+            exit 1
+          }
