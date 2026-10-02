@@ -19,7 +19,7 @@ def run_batch_execution(
     db: Session,
     actor: str,
     bucket_or_account: Optional[str] = None,
-    dry_run: bool = False,
+    dry_run: bool = True,
     max_items: int = 100,
     confirm_irreversible: bool = False,
     irreversible_justification: Optional[str] = None,

@@ -44,18 +44,30 @@ def execute_recommendation_action(
             detail=f"Recommendation for ID '{rec_id_or_obj_id}' not found"
         )
 
-    # 1. State Check: Execution strictly requires recommendation to be 'confirmed'
-    if rec_db.approval_status != ApprovalStatus.CONFIRMED.value:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot execute recommendation '{rec_id_or_obj_id}': status is '{rec_db.approval_status}', must be in 'confirmed' status."
-        )
-
     obj_db = db.query(StorageObjectDB).filter(StorageObjectDB.id == rec_db.object_id).first()
     if not obj_db:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Storage object '{rec_db.object_id}' not found"
+        )
+
+    # 1. Idempotency Check: If already executed, return current record without re-invoking cloud API or writing duplicate audit log
+    if rec_db.approval_status == ApprovalStatus.EXECUTED.value:
+        from src.api.main import db_obj_to_pydantic
+        pydantic_obj = db_obj_to_pydantic(obj_db)
+        engine = LifecycleRulesEngine()
+        rec = engine.evaluate_object(pydantic_obj)
+        rec.id = rec_db.id
+        rec.approval_status = ApprovalStatus.EXECUTED
+        rec.requires_periodic_review = rec_db.requires_periodic_review
+        rec.last_reviewed_at = rec_db.last_reviewed_at
+        return rec
+
+    # State Check: Execution strictly requires recommendation to be 'confirmed'
+    if rec_db.approval_status != ApprovalStatus.CONFIRMED.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot execute recommendation '{rec_id_or_obj_id}': status is '{rec_db.approval_status}', must be in 'confirmed' status."
         )
 
     # 2. Execution-Time Re-validation: Recheck legal hold immediately before cloud execution

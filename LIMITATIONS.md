@@ -37,6 +37,14 @@ This document outlines the architectural boundaries, provider limitations, and c
   - AWS `DEEP_ARCHIVE`: 180-day minimum charge.
 - Deleting or transitioning an object before its minimum billing window results in early deletion prorated charges.
 
+### 3. Point-in-Time Cost Estimates vs. Live AWS Billing
+- **Static Baseline**: Cost figures computed by `/api/v1/cost/report` use hardcoded published AWS S3 US-East-1 pricing ($0.023 Standard, $0.0125 Standard-IA, $0.004 Glacier Instant Retrieval, $0.0036 Glacier Flexible, $0.00099 Glacier Deep Archive per GB-month).
+- **Not Live Pricing API**: The system does not dynamically query the AWS Price List API. Real healthcare cloud bills vary based on:
+  - Region-specific rate variances (e.g., AWS GovCloud or European Union regions).
+  - Enterprise Discount Programs (EDP) negotiated by health systems.
+  - Per-request API transaction costs (e.g. $0.005 per 1,000 CopyObject requests) and data retrieval fees.
+- **Stakeholder Guidance**: All projected savings must be interpreted by hospital financial officers as architectural baseline estimates rather than binding invoices.
+
 ---
 
 ## 3. Human-in-the-Loop & Decision Support Model
@@ -59,6 +67,43 @@ Before enabling automated cloud execution in a production clinical environment, 
 | **Audit Verification** | Daily verification of SHA-256 audit log integrity via `/api/v1/audit-log/verify` | Cron monitoring script | [x] |
 | **Legal Hold Sync** | Hospital legal hold registry synchronized with `/api/v1/objects` before batch runs | Ingestion pipeline | [ ] |
 | **Reviewer Authentication** | Enforce distinct API keys for Reviewer and Admin roles with Anti-Spoofing enabled | `src/api/auth.py` | [x] |
+
+### Least-Privilege IAM Policy Template
+Hospital AWS administrators must scope credentials strictly to designated archive buckets rather than granting wildcard `s3:*` permissions:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowHospitalLifecycleTransitions",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:PutObject",
+        "s3:PutObjectAcl",
+        "s3:GetObjectAcl",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::hospital-imaging-archive-*",
+        "arn:aws:s3:::hospital-imaging-archive-*/*"
+      ]
+    },
+    {
+      "Sid": "AllowRestrictedDeletions",
+      "Effect": "Allow",
+      "Action": [
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::hospital-logs-*/*"
+      ]
+    }
+  ]
+}
+```
 
 ---
 

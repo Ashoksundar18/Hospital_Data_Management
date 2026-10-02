@@ -25,7 +25,7 @@ class ExecutionResult(BaseModel):
 
 class BatchRunRequest(BaseModel):
     bucket_or_account: Optional[str] = Field(None, description="Optional target bucket to restrict batch execution")
-    dry_run: bool = Field(False, description="If true, previews executions without mutating cloud storage")
+    dry_run: bool = Field(True, description="If true, previews executions without mutating cloud storage (defaults to True for safety)")
     max_items: int = Field(100, ge=1, le=1000, description="Maximum number of confirmed recommendations to process")
     confirm_irreversible: bool = Field(False, description="Authorize permanent DELETE and DEEP_ARCHIVE actions")
     irreversible_justification: Optional[str] = Field(None, description="Justification required if confirm_irreversible=True")

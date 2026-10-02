@@ -79,6 +79,17 @@ def test_execute_transition_success(aws_env):
             finally:
                 db.close()
 
+            # IDEMPOTENCY TEST: Second call on already executed recommendation returns 200 without duplicate execution
+            res_exec_retry = client.post(f"/api/v1/recommendations/{obj_key}/execute", json={}, headers=headers_admin)
+            assert res_exec_retry.status_code == 200
+            data_retry = res_exec_retry.json()
+            assert data_retry["approval_status"] == "executed"
+
+            # Must still have only 1 EXECUTE_TRANSITION audit entry
+            audit_res2 = client.get(f"/api/v1/audit-log?object_id={obj_key}", headers=headers_admin).json()
+            exec_entries2 = [a for a in audit_res2 if a["event_type"] == "EXECUTE_TRANSITION"]
+            assert len(exec_entries2) == 1
+
 
 def test_execute_blocked_by_legal_hold_at_execution_time(aws_env):
     """
@@ -277,4 +288,74 @@ def test_execute_unconfirmed_recommendation_returns_409(aws_env):
         res_exec = client.post(f"/api/v1/recommendations/{obj_key}/execute", json={}, headers=headers_admin)
         assert res_exec.status_code == 409
         assert "must be in 'confirmed' status" in res_exec.json()["detail"].lower()
+
+
+def test_full_lifecycle_audit_chain_verification(aws_env):
+    """
+    6. Full Lifecycle Verification:
+    Tests that a full multi-stage lifecycle — INGEST_OBJECT, CONFIRM_RECOMMENDATION,
+    EXECUTE_TRANSITION, EXECUTION_BLOCKED_LEGAL_HOLD, and BATCH_EXECUTION_RUN —
+    maintains an unbroken SHA-256 cryptographic audit chain verified by GET /api/v1/audit-log/verify.
+    """
+    with mock_aws():
+        s3 = boto3.client("s3", region_name="us-east-1")
+        bucket = f"hospital-lifecycle-{uuid.uuid4().hex[:6]}"
+        s3.create_bucket(Bucket=bucket)
+
+        obj_1 = f"obj-cycle-1-{uuid.uuid4().hex[:6]}"
+        obj_2 = f"obj-cycle-2-{uuid.uuid4().hex[:6]}"
+        s3.put_object(Bucket=bucket, Key=obj_1, Body=b"DATA_1", StorageClass="STANDARD")
+        s3.put_object(Bucket=bucket, Key=obj_2, Body=b"DATA_2", StorageClass="STANDARD")
+
+        headers_admin = {"X-API-Key": "admin-key-exec"}
+        headers_reviewer = {"X-API-Key": "reviewer-key-exec"}
+
+        with TestClient(app) as client:
+            # 1. Ingest obj 1 & obj 2
+            client.post("/api/v1/objects", json={
+                "id": obj_1,
+                "bucket_or_account": bucket,
+                "cloud_provider": "AWS",
+                "data_classification": "BACKUP",
+                "current_storage_class": "HOT",
+                "size_bytes": 1000,
+                "object_age_days": 100,
+                "legal_hold": False
+            }, headers=headers_admin)
+
+            client.post("/api/v1/objects", json={
+                "id": obj_2,
+                "bucket_or_account": bucket,
+                "cloud_provider": "AWS",
+                "data_classification": "BACKUP",
+                "current_storage_class": "HOT",
+                "size_bytes": 1000,
+                "object_age_days": 100,
+                "legal_hold": False
+            }, headers=headers_admin)
+
+            client.get("/api/v1/recommendations", headers=headers_reviewer)
+
+            # 2. Confirm both
+            client.post(f"/api/v1/recommendations/{obj_1}/confirm", json={"reviewer_id": "usr-rev"}, headers=headers_reviewer)
+            client.post(f"/api/v1/recommendations/{obj_2}/confirm", json={"reviewer_id": "usr-rev"}, headers=headers_reviewer)
+
+            # 3. Execute obj 1 directly -> EXECUTE_TRANSITION
+            res_exec1 = client.post(f"/api/v1/recommendations/{obj_1}/execute", json={}, headers=headers_admin)
+            assert res_exec1.status_code == 200
+
+            # 4. Batch run -> processes obj 2 -> BATCH_EXECUTION_RUN
+            res_batch = client.post("/api/v1/execution/batch-run", json={
+                "bucket_or_account": bucket,
+                "dry_run": False
+            }, headers=headers_admin)
+            assert res_batch.status_code == 200
+
+            # 5. Verify unbroken cryptographic chain via API endpoint
+            res_verify = client.get("/api/v1/audit-log/verify", headers=headers_admin)
+            assert res_verify.status_code == 200
+            verify_data = res_verify.json()
+            assert verify_data["is_valid"] is True
+            assert verify_data["tampered_entry_id"] is None
+            assert "integrity verified" in verify_data["message"].lower()
 

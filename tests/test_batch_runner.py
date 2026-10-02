@@ -48,10 +48,9 @@ def test_batch_execution_dry_run(aws_env):
             client.get("/api/v1/recommendations", headers=headers_reviewer)
             client.post(f"/api/v1/recommendations/{obj_key}/confirm", json={"reviewer_id": "usr-rev"}, headers=headers_reviewer)
 
-            # Trigger batch run in dry_run mode
+            # Trigger batch run omitting dry_run field entirely — must default to True for safety
             res_batch = client.post("/api/v1/execution/batch-run", json={
                 "bucket_or_account": bucket,
-                "dry_run": True,
                 "max_items": 10
             }, headers=headers_admin)
             assert res_batch.status_code == 200
