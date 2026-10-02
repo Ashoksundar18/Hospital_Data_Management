@@ -53,7 +53,10 @@ raw_db_url = resolve_database_url(os.environ)
 is_render = bool(os.getenv("RENDER"))
 
 if raw_db_url:
-    engine = create_engine(raw_db_url, pool_pre_ping=True)
+    target_url = raw_db_url
+    if target_url.startswith("postgresql://"):
+        target_url = target_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    engine = create_engine(target_url, pool_pre_ping=True)
 elif is_render:
     raise RuntimeError("DATABASE_URL environment variable is required when running on Render, but was missing or empty.")
 else:
