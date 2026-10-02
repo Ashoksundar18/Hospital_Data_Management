@@ -41,9 +41,10 @@ from src.models import (
     PeriodicReviewRequest,
     AuditEntry,
     AuditVerifyResponse,
+    CostReport,
 )
 from src.engine import LifecycleRulesEngine
-from src.services import write_audit_entry, verify_audit_chain
+from src.services import write_audit_entry, verify_audit_chain, generate_cost_report_from_db
 from src.api.auth import UserContext, get_current_user, require_role
 
 
@@ -783,3 +784,19 @@ def verify_audit_log_chain(
         tampered_entry_id=tampered_id,
         message=message
     )
+
+
+# --- COST EVALUATION & REPORTING ENDPOINTS ---
+
+@app.get("/api/v1/cost/report", response_model=CostReport)
+def get_storage_cost_report(
+    include_itemized: bool = Query(False, description="Include itemized object-level cost calculations"),
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(require_role("viewer"))
+):
+    """
+    Phase 3: Computes before/after cloud storage cost analysis across the dataset using AWS S3 tier pricing.
+    Aggregates realized, approved/queued, pending, and legal-hold-blocked cost savings.
+    """
+    return generate_cost_report_from_db(db, include_itemized=include_itemized)
+

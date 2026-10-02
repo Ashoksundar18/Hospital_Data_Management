@@ -15,6 +15,12 @@ from .recommendation import (
     AuditEntry,
     AuditVerifyResponse,
 )
+from .cost import (
+    CostEvaluationItem,
+    SingleObjectCost,
+    CostCategorySummary,
+    CostReport,
+)
 
 __all__ = [
     "StorageObject",
@@ -35,4 +41,8 @@ __all__ = [
     "PeriodicReviewRequest",
     "AuditEntry",
     "AuditVerifyResponse",
+    "CostEvaluationItem",
+    "SingleObjectCost",
+    "CostCategorySummary",
+    "CostReport",
 ]
