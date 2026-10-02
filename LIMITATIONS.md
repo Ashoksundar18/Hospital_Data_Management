@@ -6,6 +6,13 @@ This document outlines the architectural boundaries, provider limitations, and c
 
 ## 1. Architectural & Provider Scope Boundaries
 
+### 0. Deployed Instance & Cloud Credential Disclosure
+- **Demonstration / Educational Deployment**: The hosted instance on Render runs **deliberately without live AWS root or IAM credentials**. This eliminates unnecessary cloud operational expenditure and guarantees that clinical prototype data or demo buckets cannot be accidentally deleted over the public internet.
+- **Verification via `moto` Test Coverage**: Real cloud execution logic (`CopyObject`, `DeleteObject`, `HeadObject`, error handling, and in-place tier transitions) is proven through comprehensive automated testing with `moto[s3]`. The passing test suite in CI serves as formal architectural evidence that `S3StorageExecutor` is correct.
+- **Demo-Ready Phase 3 Workflows**: In the deployed environment, Phase 3 execution capabilities are demonstrated via:
+  1. **Batch Runner Dry Run (`dry_run=True`)**: Fully previews execution candidates, evaluates legal holds, skips irreversible deletions, and records a `BATCH_EXECUTION_RUN` audit log without requiring AWS access.
+  2. **Fail-Closed Execution Boundary**: Calling `/execute` or `/batch-run` (`dry_run=False`) without cloud keys cleanly catches missing credentials, writes an `EXECUTION_FAILED` audit row, and returns `HTTP 500` without crashing or corrupting state.
+
 ### 1. Provider Target (AWS S3)
 - **Current Support**: Automated cloud execution (`S3StorageExecutor`) is fully implemented for **AWS S3** storage tiers (`STANDARD`, `STANDARD_IA`, `GLACIER`, `DEEP_ARCHIVE`).
 - **Multi-Cloud Status**: Azure Blob Storage (Hot, Cool, Cold, Archive) and Google Cloud Storage (Standard, Nearline, Coldline, Archive) are supported in the **deterministic rules engine** and recommendation metadata, but physical cloud transition execution currently requires AWS S3 credentials.

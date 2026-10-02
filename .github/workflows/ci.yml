@@ -38,8 +38,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Wait for PostgreSQL
+        run: |
+          until pg_isready -h 127.0.0.1 -p 5432 -U postgres; do
+            echo "Waiting for postgres on 127.0.0.1:5432..."
+            sleep 1
+          done
+
       - name: Run Pytest test suite against PostgreSQL
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/hospital_test_db
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hospital_test_db
+          ALLOW_DEV_KEYS: "1"
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: mock-key
+          AWS_SECRET_ACCESS_KEY: mock-secret
         run: |
-          pytest -v
+          pytest -v --tb=short
