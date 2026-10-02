@@ -56,13 +56,12 @@ jobs:
           python -m pytest -v --tb=short 2>&1 | tee pytest_output.log
         continue-on-error: true
 
-      - name: Publish Test Summary
+      - name: Publish Test Output to Annotations
         if: always()
         run: |
-          echo "### Pytest Test Results" >> $GITHUB_STEP_SUMMARY
-          echo '```text' >> $GITHUB_STEP_SUMMARY
-          tail -n 80 pytest_output.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -n 60 pytest_output.log | while IFS= read -r line; do
+            echo "::notice::$line"
+          done
 
       - name: Assert All Tests Passed
         run: |
