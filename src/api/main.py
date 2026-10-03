@@ -14,6 +14,18 @@ from src.logging_config import configure_logging
 configure_logging()
 logger = logging.getLogger(__name__)
 
+# Automatically load local .env if present for developer convenience
+if os.path.exists(".env"):
+    try:
+        with open(".env", "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip())
+    except Exception:
+        pass
+
 
 from src.db import (
     engine as db_engine,

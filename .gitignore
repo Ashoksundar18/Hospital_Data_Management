@@ -13,6 +13,7 @@ htmlcov/
 *.sqlite3
 
 # Environments
+.env
 .venv/
 venv/
 ENV/

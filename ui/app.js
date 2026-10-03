@@ -3,7 +3,7 @@ let allAuditLogs = [];
 let currentSelectedRecId = null;
 
 function getApiKey() {
-    return sessionStorage.getItem('X-API-Key') || '';
+    return sessionStorage.getItem('X-API-Key') || 'dev-admin-key';
 }
 
 async function apiFetch(url, options = {}) {
